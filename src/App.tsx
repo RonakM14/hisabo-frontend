@@ -843,9 +843,22 @@ export default function App() {
           onClick={() => setNavigation("overview")}
         >
           <span className="brand-mark">
-            <Layers3 size={23} />
+            <svg
+              width="23"
+              height="23"
+              viewBox="0 0 24 24"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M5 4v16M19 4v16M5 12h14"
+                stroke="currentColor"
+                strokeWidth="3"
+                strokeLinecap="round"
+              />
+            </svg>
           </span>
-          Ledger<span>One</span>
+          Hisabo
         </a>
         <div className="workspace-switch">
           <span className="workspace-icon">
@@ -1379,7 +1392,7 @@ export default function App() {
                   Your data stays on your computer.
                 </span>
                 <span>
-                  LedgerOne <span>·</span> {year} ledger <span>·</span> USD
+                  Hisabo <span>·</span> {year} ledger <span>·</span> USD
                 </span>
               </footer>
             </div>

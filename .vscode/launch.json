@@ -2,18 +2,18 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "LedgerOne: React in Chrome",
+      "name": "Hisabo: React in Chrome",
       "type": "pwa-chrome",
       "request": "launch",
-      "url": "http://localhost:5173",
+      "url": "http://hisabo.localhost:5173",
       "webRoot": "${workspaceFolder}/src",
       "sourceMaps": true
     },
     {
-      "name": "LedgerOne: React in Edge",
+      "name": "Hisabo: React in Edge",
       "type": "pwa-msedge",
       "request": "launch",
-      "url": "http://localhost:5173",
+      "url": "http://hisabo.localhost:5173",
       "webRoot": "${workspaceFolder}/src",
       "sourceMaps": true
     }

@@ -8,7 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const env = { ...loadEnv("development", root, ""), ...process.env };
 const backend = path.resolve(
   root,
-  env.LEDGER_BACKEND_DIR || "../ledgerone-backend",
+  env.LEDGER_BACKEND_DIR || "../hisabo-backend",
 );
 const windows = process.platform === "win32";
 const wrapper = path.join(backend, windows ? "mvnw.cmd" : "mvnw");
@@ -70,7 +70,7 @@ try {
     );
     process.exit(1);
   }
-  console.log("\nStarting LedgerOne backend…\n");
+  console.log("\nStarting Hisabo backend…\n");
   const args = ["spring-boot:run"];
   if (env.MAVEN_REPO_LOCAL)
     args.unshift(`-Dmaven.repo.local=${env.MAVEN_REPO_LOCAL}`);
@@ -94,7 +94,7 @@ try {
     }).catch(() => null);
     if (response?.ok) {
       const health = await response.json();
-      if (health.application === "LedgerOne") {
+      if (health.application === "Hisabo") {
         ready = true;
         break;
       }
@@ -108,7 +108,7 @@ try {
     stop(1);
   } else {
     console.log(
-      "\nBackend ready. Starting React at http://localhost:5173. Ctrl+C stops both apps.\n",
+      "\nHisabo is ready at http://hisabo.localhost:5173. Opening your browser… Ctrl+C stops both apps.\n",
     );
     start(
       process.execPath,

@@ -11,12 +11,20 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
+      host: "127.0.0.1",
       port: 5173,
       strictPort: true,
+      open: "http://hisabo.localhost:5173",
       proxy,
       watch: { usePolling: true, interval: 300 },
     },
-    preview: { port: 4173, proxy },
+    preview: {
+      host: "127.0.0.1",
+      port: 4173,
+      strictPort: true,
+      open: "http://hisabo.localhost:4173",
+      proxy,
+    },
     build: {
       rollupOptions: {
         output: {

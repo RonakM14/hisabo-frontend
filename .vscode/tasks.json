@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "LedgerOne: Run both apps",
+      "label": "Hisabo: Run both apps",
       "type": "npm",
       "script": "dev:all",
       "isBackground": true,
@@ -10,7 +10,7 @@
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
     {
-      "label": "LedgerOne: Frontend only",
+      "label": "Hisabo: Frontend only",
       "type": "npm",
       "script": "dev",
       "isBackground": true,
@@ -18,7 +18,7 @@
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
     {
-      "label": "LedgerOne: Build frontend",
+      "label": "Hisabo: Build frontend",
       "type": "npm",
       "script": "build",
       "group": "build",

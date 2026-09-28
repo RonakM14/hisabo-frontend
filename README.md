@@ -1,6 +1,6 @@
-# LedgerOne Frontend
+# Hisabo Frontend
 
-React 19.3 + TypeScript 7 + Vite 8 + Apache ECharts 6. The companion Java 25 project is `ledgerone-backend`; both are independent repositories.
+React 19.3 + TypeScript 7 + Vite 8 + Apache ECharts 6. The companion Java 25 project is `hisabo-backend`; both are independent repositories.
 
 ## Quick start — both apps
 
@@ -8,8 +8,8 @@ Requirements: **JDK 25** and **Node.js 24 LTS** (Node 22.12+ is also accepted), 
 
 ```text
 workspace/
-  ledgerone-backend/
-  ledgerone-frontend/
+  hisabo-backend/
+  hisabo-frontend/
 ```
 
 From this frontend directory:
@@ -19,19 +19,27 @@ npm ci
 npm run dev:all
 ```
 
-Open **http://localhost:5173**. The launcher waits for Java on port 8080, then starts Vite on 5173. Ctrl+C stops both. The first run downloads the backend's Maven dependencies. The backend must be stopped before using `dev:all`; otherwise the launcher explains how to connect to an already running instance.
+Your browser opens **http://hisabo.localhost:5173** automatically. The launcher waits for Java on port 8080, then starts Vite on 5173. Ctrl+C stops both. The first run downloads the backend's Maven dependencies. The backend must be stopped before using `dev:all`; otherwise the launcher explains how to connect to an already running instance.
 
 If the backend is elsewhere, set `LEDGER_BACKEND_DIR` to its path in your environment or an untracked `.env` file. `BACKEND_URL` defaults to `http://127.0.0.1:8080`.
 
+## Your local Hisabo address
+
+The app uses **http://hisabo.localhost:5173** for development and **http://hisabo.localhost:4173** for a production-build preview. The browser tab is titled **Hisabo · Financial workspace**. Both `npm run dev` and `npm run dev:all` open the named development address; `npm run preview` opens the preview address. Set `BROWSER=none` in `.env` if you prefer to open it manually.
+
+`.localhost` is a local browser address: the app stays on your computer, with no domain purchase or hosts-file edit needed in current Chrome, Edge, and Firefox. If a browser or proxy cannot resolve it, use `http://127.0.0.1:5173` as a fallback. The Java API remains on `127.0.0.1:8080` internally; the website reaches it through `/api`. A public address such as `hisabo.com` would require a domain you control and a separate deployment.
+
+References: [local addresses in browsers](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Secure_Contexts), [Vite hostname support](https://vite.dev/config/server-options#server-allowedhosts).
+
 ## IntelliJ IDEA + Visual Studio Code
 
-1. Open `ledgerone-backend/pom.xml` in IntelliJ and set the project SDK and Maven runner JRE to Java 25.
-2. Run or debug `com.ledgerone.LedgerOneApplication` using the included **LedgerOne Backend** run configuration.
+1. Open `hisabo-backend/pom.xml` in IntelliJ and set the project SDK and Maven runner JRE to Java 25.
+2. Run or debug `com.hisabo.HisaboApplication` using the included **Hisabo Backend** run configuration.
 3. Open this frontend directory in VS Code. Run `npm ci` once, then `npm run dev` in its terminal.
-4. Open `http://localhost:5173`. Vite forwards `/api` calls to Java; changes are written to the backend's annual XML file.
-5. In VS Code, use **Run and Debug → LedgerOne: React in Chrome** or **React in Edge** for frontend breakpoints. Keep the backend debugger running in IntelliJ.
+4. Open `http://hisabo.localhost:5173`. Vite forwards `/api` calls to Java; changes are written to the backend's annual XML file.
+5. In VS Code, use **Run and Debug → Hisabo: React in Chrome** or **React in Edge** for frontend breakpoints. Keep the backend debugger running in IntelliJ.
 
-You can also open the supplied `LedgerOne.code-workspace` beside both directories to see both projects in VS Code. The backend includes a Java launch configuration for the Java Extension Pack. No IDE installation or settings on your computer have been changed.
+You can also open the supplied `Hisabo.code-workspace` beside both directories to see both projects in VS Code. The backend includes a Java launch configuration for the Java Extension Pack. No IDE installation or settings on your computer have been changed.
 
 For **full Visual Studio** on Windows, open this folder and run `npm ci` / `npm run dev` in the integrated terminal. Keep Java in IntelliJ. The supplied `.vscode` debugger files specifically target **Visual Studio Code**; a `.sln` project is not required for this React application.
 
@@ -42,7 +50,7 @@ For **full Visual Studio** on Windows, open this folder and run `npm ci` / `npm 
 | `npm run dev:all` | Start both backend and frontend                                             |
 | `npm run dev`     | Start frontend only; connect to an existing backend                         |
 | `npm run build`   | Type-check and create the production bundle in `dist/`                      |
-| `npm run preview` | Preview that bundle on `http://localhost:4173`, with the same backend proxy |
+| `npm run preview` | Preview that bundle on `http://hisabo.localhost:4173`, with the same backend proxy |
 | `npm test`        | Run financial-calculation and transaction-filter tests                      |
 
 The frontend is a running application: do not double-click `index.html`. Use Vite or a web server with `/api` forwarding configured. Java must be running to load or save a ledger.
