@@ -35,10 +35,17 @@ function Chart({
     if (!ref.current) return;
     const instance = echarts.init(ref.current);
     chart.current = instance;
-    const observer = new ResizeObserver(() => instance.resize());
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (!instance.isDisposed()) instance.resize();
+      });
+    });
     observer.observe(ref.current);
     return () => {
       observer.disconnect();
+      cancelAnimationFrame(frame);
       instance.dispose();
       chart.current = null;
     };

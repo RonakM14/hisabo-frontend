@@ -10,7 +10,12 @@ export default defineConfig(({ mode }) => {
   };
   return {
     plugins: [react()],
-    server: { port: 5173, strictPort: true, proxy },
+    server: {
+      port: 5173,
+      strictPort: true,
+      proxy,
+      watch: { usePolling: true, interval: 300 },
+    },
     preview: { port: 4173, proxy },
     build: {
       rollupOptions: {
