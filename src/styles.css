@@ -2423,6 +2423,7 @@ dialog::backdrop {
 }
 .month-tabs {
   min-width: 0;
+  position: relative;
 }
 .main-content {
   min-width: 0;

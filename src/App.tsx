@@ -720,15 +720,10 @@ export default function App() {
       const active = container.querySelector<HTMLElement>(
         '[aria-selected="true"]',
       );
-      if (active)
-        container.scrollTo({
-          left:
-            active.offsetLeft -
-            container.offsetLeft -
-            container.clientWidth / 2 +
-            active.clientWidth / 2,
-          behavior: "instant",
-        });
+      if (active) {
+        container.scrollLeft =
+          active.offsetLeft - container.clientWidth / 2 + active.clientWidth / 2;
+      }
     };
     const observer = new ResizeObserver(scroll);
     observer.observe(container);
