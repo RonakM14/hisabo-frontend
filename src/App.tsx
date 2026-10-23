@@ -21,10 +21,15 @@ import {
   ChevronRight,
   CircleAlert,
   Database,
+  FileSpreadsheet,
+  House,
   LayoutDashboard,
   Layers3,
   LoaderCircle,
+  Moon,
+  Sun,
   Pencil,
+  PiggyBank,
   Plus,
   RefreshCw,
   Search,
@@ -41,9 +46,11 @@ import { api, ApiError } from "./api";
 import {
   ACCOUNT,
   annualSeries,
-  CATEGORY,
+  budgetSourceLabel,
+  categoryMap,
+  DEFAULT_BUDGET_CATEGORIES,
+  visibleBudgetCategories,
   dailySpending,
-  EXPENSE_CATEGORIES,
   filterTransactions,
   MONTHS,
   money,
@@ -52,9 +59,11 @@ import {
 } from "./data";
 import type {
   Account,
+  BudgetCategory,
   Category,
   ExpenseCategory,
   MonthLedger,
+  Profile,
   Transaction,
   TransactionDraft,
   TransactionType,
@@ -62,10 +71,16 @@ import type {
 } from "./types";
 import { CashflowChart, Sparkline, SpendingDonut } from "./Charts";
 
+import ProfileManager, { profileInitials } from "./ProfileManager";
+import MortgageWorkspace from "./MortgageWorkspace";
+import CategoryManager from "./CategoryManager";
+import { useTheme } from "./theme";
+
 const today = new Date();
 type DialogState =
   | { kind: "transaction"; transaction?: Transaction }
   | { kind: "budgets" }
+  | { kind: "categories" }
   | { kind: "delete"; transaction: Transaction }
   | null;
 
@@ -110,7 +125,7 @@ function Modal({
     >
       <header className="dialog-heading">
         <div>
-          <span className="overline">LEDGERONE WORKSPACE</span>
+          <span className="overline">HISABO WORKSPACE</span>
           <h2 id="dialog-title">{title}</h2>
           <p>{subtitle}</p>
         </div>
@@ -129,6 +144,7 @@ function Modal({
 }
 
 function TransactionForm({
+  categories,
   transaction,
   year,
   month,
@@ -137,6 +153,7 @@ function TransactionForm({
   onSave,
   onClose,
 }: {
+  categories: BudgetCategory[];
   transaction?: Transaction;
   year: number;
   month: number;
@@ -145,11 +162,13 @@ function TransactionForm({
   onSave: (draft: TransactionDraft, id?: string) => void;
   onClose: () => void;
 }) {
+  const CATEGORY = categoryMap(categories);
+  const active = categories.filter((c) => c.active);
   const [type, setType] = useState<TransactionType>(
-    transaction?.type || "EXPENSE",
+    transaction?.type || (active.length ? "EXPENSE" : "INCOME"),
   );
   const [category, setCategory] = useState<Category>(
-    transaction?.category || "FOOD",
+    transaction?.category || active[0]?.id || "SALARY",
   );
   const day =
     year === today.getFullYear() && month === today.getMonth() + 1
@@ -181,9 +200,18 @@ function TransactionForm({
             className={type === v ? "selected" : ""}
             onClick={() => {
               setType(v);
-              setCategory(v === "EXPENSE" ? "FOOD" : "SALARY");
+              setCategory(
+                v === "EXPENSE"
+                  ? active[0]?.id || transaction?.category || ""
+                  : "SALARY",
+              );
             }}
-            disabled={busy}
+            disabled={
+              busy ||
+              (v === "EXPENSE" &&
+                !active.length &&
+                transaction?.type !== "EXPENSE")
+            }
           >
             {v === "EXPENSE" ? (
               <ArrowUpRight size={16} />
@@ -244,17 +272,22 @@ function TransactionForm({
             onChange={(e) => setCategory(e.target.value as Category)}
             disabled={busy}
           >
-            {Object.entries(CATEGORY)
-              .filter(([key]) =>
-                type === "EXPENSE"
-                  ? EXPENSE_CATEGORIES.includes(key as ExpenseCategory)
-                  : !EXPENSE_CATEGORIES.includes(key as ExpenseCategory),
-              )
-              .map(([key, value]) => (
-                <option key={key} value={key}>
-                  {value.label}
-                </option>
-              ))}
+            {(type === "EXPENSE"
+              ? categories
+                  .filter((c) => c.active || c.id === transaction?.category)
+                  .map((c) => ({
+                    ...c,
+                    label: c.label + (c.active ? "" : " (removed)"),
+                  }))
+              : ["SALARY", "FREELANCE", "OTHER_INCOME"].map((id) => ({
+                  id,
+                  ...CATEGORY[id],
+                }))
+            ).map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
           </select>
         </label>
         <label className="field">
@@ -305,40 +338,52 @@ function TransactionForm({
 }
 
 function BudgetForm({
+  categories,
   month,
   busy,
   error,
   onClose,
   onSave,
 }: {
+  categories: BudgetCategory[];
   month: MonthLedger;
   busy: boolean;
   error: string;
   onClose: () => void;
   onSave: (budgets: Record<ExpenseCategory, number>) => void;
 }) {
+  const CATEGORY = categoryMap(categories);
+  const editable = visibleBudgetCategories(categories, month);
   const [budgets, setBudgets] = useState<Record<ExpenseCategory, string>>(
     Object.fromEntries(
-      EXPENSE_CATEGORIES.map((c) => [c, String(month.budgets[c])]),
+      editable.map(({ id: c }) => [c, String(month.budgets[c] ?? 0)]),
     ) as Record<ExpenseCategory, string>,
   );
+  const preview = summarize({
+    ...month,
+    budgets: Object.fromEntries(
+      Object.entries(budgets).map(([id, value]) => [id, Number(value) || 0]),
+    ),
+  });
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
         onSave(
           Object.fromEntries(
-            EXPENSE_CATEGORIES.map((c) => [c, Number(budgets[c])]),
+            editable.map(({ id: c }) => [c, Number(budgets[c])]),
           ) as Record<ExpenseCategory, number>,
         );
       }}
     >
       <div className="budget-fields">
-        {EXPENSE_CATEGORIES.map((c) => (
+        {editable.map(({ id: c }) => (
           <label key={c}>
             <span>
               <i style={{ background: CATEGORY[c].color }} />
               {CATEGORY[c].label}
+              {!categories.find((item) => item.id === c)?.active &&
+                " (removed)"}
             </span>
             <div className="currency-input">
               <span>$</span>
@@ -363,6 +408,23 @@ function BudgetForm({
         <span>Total monthly allocation</span>
         <strong>{money(sum(Object.values(budgets).map(Number)), 2)}</strong>
       </div>
+      <div className="budget-savings-preview">
+        <span>
+          <PiggyBank size={17} />
+          Savings <small>Income not assigned to budgets</small>
+        </span>
+        <strong>{money(preview.savings, 2)}</strong>
+      </div>
+      {preview.budgetShortfall > 0 && (
+        <p className="budget-plan-warning">
+          Your budget is {money(preview.budgetShortfall, 2)} above this month's
+          recorded income.
+        </p>
+      )}
+      <p className="budget-repeat-note">
+        This plan repeats in the following months until you set a different
+        budget. Months with their own plan stay unchanged.
+      </p>
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -441,7 +503,9 @@ function SpendingCalendar({
               title={`${MONTHS[month.number - 1]} ${i + 1}: ${money(amount, 2)} spent`}
               aria-label={`${MONTHS[month.number - 1]} ${i + 1}, ${money(amount, 2)} spent`}
               style={{
-                background: amount ? `rgba(66,99,235,${intensity})` : "#f5f7fb",
+                background: amount
+                  ? `rgba(66,99,235,${intensity})`
+                  : "var(--surface-muted, #f5f7fb)",
               }}
             >
               <span>{i + 1}</span>
@@ -475,26 +539,36 @@ function SpendingCalendar({
 }
 
 function Transactions({
+  categories,
   month,
   year,
   onAdd,
   onEdit,
   onDelete,
 }: {
+  categories: BudgetCategory[];
   month: MonthLedger;
   year: number;
   onAdd: () => void;
   onEdit: (t: Transaction) => void;
   onDelete: (t: Transaction) => void;
 }) {
+  const CATEGORY = categoryMap(categories);
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState("ALL"),
     [sort, setSort] = useState<"newest" | "oldest" | "amount">("newest"),
     [page, setPage] = useState(1);
   const deferredQuery = useDeferredValue(query);
   const rows = useMemo(
-    () => filterTransactions(month.transactions, deferredQuery, filter, sort),
-    [month, deferredQuery, filter, sort],
+    () =>
+      filterTransactions(
+        month.transactions,
+        deferredQuery,
+        filter,
+        sort,
+        categories,
+      ),
+    [month, deferredQuery, filter, sort, categories],
   );
   useEffect(() => setPage(1), [query, filter, sort, month.number, year]);
   const pages = Math.max(1, Math.ceil(rows.length / 7)),
@@ -699,6 +773,7 @@ function Transactions({
 }
 
 export default function App() {
+  const { theme, toggleTheme } = useTheme();
   const [year, setYear] = useState(today.getFullYear()),
     [month, setMonth] = useState(today.getMonth() + 1),
     [ledger, setLedger] = useState<YearLedger | null>(null),
@@ -712,6 +787,33 @@ export default function App() {
     [toast, setToast] = useState(""),
     [navigation, setNavigation] = useState("overview"),
     [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [profileId, setProfileId] = useState(() => {
+    try {
+      return localStorage.getItem("hisabo.activeProfile") || "default";
+    } catch {
+      return "default";
+    }
+  });
+  const [profilesOpen, setProfilesOpen] = useState(false);
+  const [profileBusy, setProfileBusy] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState("");
+  const loadVersion = useRef(0);
+  const activeProfile = profiles.find((profile) => profile.id === profileId);
+  const profileName = activeProfile?.name || "Personal";
+  const [mortgageBusy, setMortgageBusy] = useState(false);
+  const [workspaceView, setWorkspaceView] = useState<"budget" | "mortgage">(
+    "budget",
+  );
+  const isMortgage = activeProfile?.template === "MORTGAGE";
+  const showMortgage = isMortgage && workspaceView === "mortgage";
+  useEffect(() => {
+    setWorkspaceView(
+      activeProfile?.template === "MORTGAGE" ? "mortgage" : "budget",
+    );
+  }, [profileId, activeProfile?.template]);
+  const controlsBusy = busy || profileBusy || downloading || mortgageBusy;
   const monthsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const container = monthsRef.current;
@@ -722,7 +824,9 @@ export default function App() {
       );
       if (active) {
         container.scrollLeft =
-          active.offsetLeft - container.clientWidth / 2 + active.clientWidth / 2;
+          active.offsetLeft -
+          container.clientWidth / 2 +
+          active.clientWidth / 2;
       }
     };
     const observer = new ResizeObserver(scroll);
@@ -732,26 +836,105 @@ export default function App() {
   }, [month]);
   const load = useCallback(
     async (signal?: AbortSignal) => {
+      const version = ++loadVersion.current;
       setLoading(true);
       setError("");
       try {
+        const profileList = await api.profiles(signal);
+        if (signal?.aborted || version !== loadVersion.current) return;
+        setProfiles(profileList);
+        if (!profileList.some((profile) => profile.id === profileId)) {
+          setProfileId("default");
+          try {
+            localStorage.removeItem("hisabo.activeProfile");
+          } catch {
+            /* Selection is optional. */
+          }
+          return;
+        }
         const [data, list] = await Promise.all([
-          api.year(year, signal),
-          api.years(signal),
+          api.year(profileId, year, signal),
+          api.years(profileId, signal),
         ]);
+        if (signal?.aborted || version !== loadVersion.current) return;
         setLedger(data);
         setYears(list.years);
       } catch (e) {
-        if (!(e instanceof DOMException && e.name === "AbortError"))
+        if (!signal?.aborted && version === loadVersion.current)
           setError(
-            e instanceof Error ? e.message : "Unable to load your ledger.",
+            e instanceof ApiError && e.status === 404
+              ? "Restart the Java backend in IntelliJ to enable profiles, then click Refresh."
+              : e instanceof Error
+                ? e.message
+                : "Unable to load your ledger.",
           );
       } finally {
-        if (!signal?.aborted) setLoading(false);
+        if (!signal?.aborted && version === loadVersion.current)
+          setLoading(false);
       }
     },
-    [year],
+    [year, profileId],
   );
+  function selectProfile(profile: Profile) {
+    loadVersion.current++;
+    setLedger(null);
+    setYears([]);
+    setLastSaved(null);
+    setDownloadError("");
+    setDialog(null);
+    setProfilesOpen(false);
+    setLoading(true);
+    setError("");
+    try {
+      localStorage.setItem("hisabo.activeProfile", profile.id);
+    } catch {
+      /* No ledger data is stored in the browser. */
+    }
+    if (profile.id === profileId) void load();
+    else setProfileId(profile.id);
+  }
+  function profileSaved(profile: Profile, created: boolean) {
+    setProfiles((previous) =>
+      created
+        ? [...previous, profile]
+        : previous.map((item) => (item.id === profile.id ? profile : item)),
+    );
+    selectProfile(profile);
+    setToast(
+      profile.workbookWarning ||
+        (created
+          ? `${profile.name} is ready. Start with your first transaction.`
+          : `Profile renamed to ${profile.name}.`),
+    );
+  }
+  async function downloadExcel() {
+    if (!ledger?.workbook) return;
+    setDownloading(true);
+    setDownloadError("");
+    try {
+      const blob = await api.download(profileId, year);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = ledger.workbook.fileName;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setLedger((previous) =>
+        previous?.workbook
+          ? { ...previous, workbook: { ...previous.workbook, warning: null } }
+          : previous,
+      );
+      setToast(`Downloaded ${ledger.workbook.fileName}`);
+    } catch (e) {
+      setDownloadError(
+        e instanceof Error ? e.message : "Could not download Excel.",
+      );
+    } finally {
+      setDownloading(false);
+    }
+  }
   useEffect(() => {
     const controller = new AbortController();
     setLedger(null);
@@ -764,6 +947,7 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [toast]);
   function openDialog(value: DialogState) {
+    if (loading || controlsBusy) return;
     setDialogError("");
     setDialog(value);
   }
@@ -784,7 +968,7 @@ export default function App() {
       setDialogError(message);
       if (e instanceof ApiError && e.status === 409) {
         try {
-          setLedger(await api.year(year));
+          setLedger(await api.year(profileId, year));
         } catch {
           /* Preserve the form and show the original conflict. */
         }
@@ -802,8 +986,11 @@ export default function App() {
         ...Array.from({ length: 101 }, (_, i) => 2000 + i),
       ]),
     ].sort((a, b) => b - a);
+  const categories = ledger?.categories?.entries ?? DEFAULT_BUDGET_CATEGORIES;
+  const CATEGORY = categoryMap(categories);
   const expenses = current
-    ? EXPENSE_CATEGORIES.map((c) => ({
+    ? visibleBudgetCategories(categories, current).map(({ id: c, active }) => ({
+        active,
         category: c,
         total: sum(
           current.transactions
@@ -823,16 +1010,16 @@ export default function App() {
       ? (summary.expense / summary.budget) * 100
       : 0;
   const navigate = (id: string) => {
+    if (controlsBusy) return;
+    setWorkspaceView("budget");
     setNavigation(id);
     if (id === "cashflow") setRange("year");
-    document
-      .getElementById(id)
-      ?.scrollIntoView({
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
-          ? "instant"
-          : "smooth",
-        block: "start",
-      });
+    document.getElementById(id)?.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+      block: "start",
+    });
   };
   return (
     <div className="app-shell">
@@ -860,17 +1047,34 @@ export default function App() {
           </span>
           Hisabo
         </a>
-        <div className="workspace-switch">
+        <button
+          className="workspace-switch"
+          onClick={() => setProfilesOpen(true)}
+          disabled={controlsBusy || !!dialog || profiles.length === 0}
+          aria-label="Manage profiles"
+        >
           <span className="workspace-icon">
             <Building2 size={20} />
           </span>
           <div>
-            <strong>Personal workspace</strong>
-            <small>Your financial command center</small>
+            <strong>{profileName}</strong>
+            <small>Switch or add a profile</small>
           </div>
-        </div>
+          <ChevronDown size={14} />
+        </button>
         <span className="nav-label">WORKSPACE</span>
         <nav aria-label="Main navigation">
+          {isMortgage && (
+            <button
+              className={showMortgage ? "nav-item active" : "nav-item"}
+              disabled={controlsBusy}
+              onClick={() => setWorkspaceView("mortgage")}
+            >
+              <House size={19} />
+              <span>Mortgage planner</span>
+              {showMortgage && <i />}
+            </button>
+          )}
           {[
             { id: "overview", label: "Overview", icon: LayoutDashboard },
             { id: "transactions", label: "Transactions", icon: ArrowRight },
@@ -880,13 +1084,15 @@ export default function App() {
             <button
               key={item.id}
               className={
-                navigation === item.id ? "nav-item active" : "nav-item"
+                !showMortgage && navigation === item.id
+                  ? "nav-item active"
+                  : "nav-item"
               }
               onClick={() => navigate(item.id)}
             >
               <item.icon size={19} />
               <span>{item.label}</span>
-              {navigation === item.id && <i />}
+              {!showMortgage && navigation === item.id && <i />}
             </button>
           ))}
         </nav>
@@ -903,14 +1109,16 @@ export default function App() {
             </p>
             <div>
               <Database size={13} />
-              <span>XML persistence</span>
+              <span>XML + Excel workbooks</span>
             </div>
           </div>
           <div className="local-profile">
-            <span className="profile-avatar">L</span>
+            <span className="profile-avatar">
+              {profileInitials(profileName)}
+            </span>
             <div>
-              <strong>Local workspace</strong>
-              <small>Personal edition</small>
+              <strong>{profileName}</strong>
+              <small>Saved on your computer</small>
             </div>
             <ShieldCheck size={17} />
           </div>
@@ -920,9 +1128,21 @@ export default function App() {
         <header className="topbar">
           <div className="breadcrumb">
             Workspace <ChevronRight size={14} />
-            <strong>Financial overview</strong>
+            <strong>
+              {showMortgage ? "Mortgage planner" : "Financial overview"}
+            </strong>
           </div>
           <div className="topbar-right">
+            <button
+              type="button"
+              className="theme-toggle"
+              onClick={toggleTheme}
+              aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+              title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`}
+            >
+              {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}
+              <span>{theme === "dark" ? "Light" : "Dark"}</span>
+            </button>
             <span className={`connection-status ${error ? "offline" : ""}`}>
               <i />
               {loading
@@ -932,471 +1152,644 @@ export default function App() {
                   : "Backend connected"}
             </span>
             <span className="topbar-divider" />
-            <span className="profile-circle">L</span>
+            <button
+              className="topbar-profile"
+              onClick={() => setProfilesOpen(true)}
+              disabled={controlsBusy || !!dialog || profiles.length === 0}
+              aria-label={`Profiles: ${profileName}`}
+            >
+              <span className="profile-circle">
+                {profileInitials(profileName)}
+              </span>
+              <span className="topbar-profile-name">{profileName}</span>
+              <ChevronDown size={14} />
+            </button>
           </div>
         </header>
         <div className="main-content" id="overview">
-          <div className="page-heading">
-            <div>
-              <span className="overline">YOUR FINANCIAL WORKSPACE</span>
-              <h1>
-                Financial overview<span>.</span>
-              </h1>
-              <p>Clarity today. Confidence for what’s next.</p>
-            </div>
-            <div className="heading-actions">
+          {isMortgage && (
+            <div className="profile-view-tabs" aria-label="Profile workspace">
               <button
-                className="secondary-button refresh-button"
-                aria-label="Refresh from backend"
-                onClick={() => void load()}
-                disabled={loading || busy}
+                className={showMortgage ? "active" : ""}
+                disabled={controlsBusy}
+                onClick={() => setWorkspaceView("mortgage")}
               >
-                <RefreshCw size={17} className={loading ? "spin" : ""} />
-                <span>Refresh</span>
+                <House size={17} />
+                Mortgage planner
               </button>
               <button
-                className="primary-button"
-                onClick={() => openDialog({ kind: "transaction" })}
-                disabled={!ledger || loading || busy}
+                className={!showMortgage ? "active" : ""}
+                disabled={controlsBusy}
+                onClick={() => setWorkspaceView("budget")}
               >
-                <Plus size={18} />
-                New transaction
+                <Wallet size={17} />
+                Monthly budget
               </button>
             </div>
-          </div>
-          <div className="period-bar">
-            <label className="year-select">
-              <CalendarDays size={17} />
-              <select
-                aria-label="Ledger year"
-                value={year}
-                onChange={(e) => setYear(Number(e.target.value))}
-                disabled={busy}
-              >
-                {yearOptions.map((y) => (
-                  <option value={y} key={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} />
-            </label>
-            <div
-              ref={monthsRef}
-              className="month-tabs"
-              role="tablist"
-              aria-label="Months"
-              onKeyDown={(e) => {
-                if (busy) return;
-                let next = month;
-                if (e.key === "ArrowRight") next = month === 12 ? 1 : month + 1;
-                else if (e.key === "ArrowLeft")
-                  next = month === 1 ? 12 : month - 1;
-                else if (e.key === "Home") next = 1;
-                else if (e.key === "End") next = 12;
-                else return;
-                e.preventDefault();
-                setMonth(next);
-                document.getElementById(`month-tab-${next}`)?.focus();
-              }}
-            >
-              {MONTHS.map((name, index) => (
-                <button
-                  role="tab"
-                  tabIndex={month === index + 1 ? 0 : -1}
-                  aria-selected={month === index + 1}
-                  aria-controls="month-content"
-                  id={`month-tab-${index + 1}`}
-                  key={name}
-                  onClick={() => setMonth(index + 1)}
-                  className={month === index + 1 ? "active" : ""}
-                  disabled={busy}
-                >
-                  {name.slice(0, 3)}
-                </button>
-              ))}
+          )}
+          {isMortgage && (
+            <div hidden={!showMortgage}>
+              <MortgageWorkspace
+                key={profileId}
+                profileId={profileId}
+                name={profileName}
+                onBusyChange={setMortgageBusy}
+              />
             </div>
-          </div>
-          {error && (
-            <div className="error-banner" role="alert">
-              <CircleAlert size={21} />
+          )}
+          <div hidden={showMortgage}>
+            <div className="page-heading">
               <div>
-                <strong>We couldn’t load your ledger</strong>
-                <p>{error}</p>
+                <span className="overline">YOUR FINANCIAL WORKSPACE</span>
+                <h1>
+                  Financial overview<span>.</span>
+                </h1>
+                <p>
+                  <strong className="overview-profile-name">
+                    {profileName}
+                  </strong>{" "}
+                  · Clarity today. Confidence for what’s next.
+                </p>
               </div>
-              <button className="secondary-button" onClick={() => void load()}>
-                Retry
-              </button>
-            </div>
-          )}
-          {loading && !ledger && (
-            <div className="loading-grid" aria-live="polite">
-              <div className="loading-message">
-                <LoaderCircle size={24} className="spin" />
-                Opening your {year} ledger…
+              <div className="heading-actions">
+                <button
+                  className="secondary-button refresh-button"
+                  aria-label="Refresh from backend"
+                  onClick={() => void load()}
+                  disabled={loading || controlsBusy}
+                >
+                  <RefreshCw size={17} className={loading ? "spin" : ""} />
+                  <span>Refresh</span>
+                </button>
+                <button
+                  className="primary-button"
+                  onClick={() => openDialog({ kind: "transaction" })}
+                  disabled={!ledger || loading || controlsBusy}
+                >
+                  <Plus size={18} />
+                  New transaction
+                </button>
               </div>
-              {[1, 2, 3, 4].map((n) => (
-                <div className="skeleton-card" key={n} />
-              ))}
-              <div className="skeleton-panel" />
             </div>
-          )}
-          {ledger && current && summary && (
-            <div
-              id="month-content"
-              role="tabpanel"
-              aria-labelledby={`month-tab-${month}`}
-              className={`dashboard-content ${loading ? "refreshing" : ""}`}
-            >
-              <div className="period-caption">
-                <h2>
-                  {MONTHS[month - 1]} <span>{year}</span>
-                </h2>
+            <div className="period-bar">
+              <label className="year-select">
+                <CalendarDays size={17} />
+                <select
+                  aria-label="Ledger year"
+                  value={year}
+                  onChange={(e) => {
+                    loadVersion.current++;
+                    setLedger(null);
+                    setLastSaved(null);
+                    setDownloadError("");
+                    setYear(Number(e.target.value));
+                  }}
+                  disabled={controlsBusy}
+                >
+                  {yearOptions.map((y) => (
+                    <option value={y} key={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown size={14} />
+              </label>
+              <div
+                ref={monthsRef}
+                className="month-tabs"
+                role="tablist"
+                aria-label="Months"
+                onKeyDown={(e) => {
+                  if (busy) return;
+                  let next = month;
+                  if (e.key === "ArrowRight")
+                    next = month === 12 ? 1 : month + 1;
+                  else if (e.key === "ArrowLeft")
+                    next = month === 1 ? 12 : month - 1;
+                  else if (e.key === "Home") next = 1;
+                  else if (e.key === "End") next = 12;
+                  else return;
+                  e.preventDefault();
+                  setMonth(next);
+                  document.getElementById(`month-tab-${next}`)?.focus();
+                }}
+              >
+                {MONTHS.map((name, index) => (
+                  <button
+                    role="tab"
+                    tabIndex={month === index + 1 ? 0 : -1}
+                    aria-selected={month === index + 1}
+                    aria-controls="month-content"
+                    id={`month-tab-${index + 1}`}
+                    key={name}
+                    onClick={() => setMonth(index + 1)}
+                    className={month === index + 1 ? "active" : ""}
+                    disabled={busy}
+                  >
+                    {name.slice(0, 3)}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {(ledger?.workbook?.warning || downloadError) && (
+              <div className="error-banner" role="alert">
+                <CircleAlert size={21} />
                 <div>
-                  <span className="save-status">
-                    <CheckCircle2 size={14} />
-                    {lastSaved
-                      ? `Saved at ${lastSaved.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`
-                      : "Loaded from your ledger"}
-                  </span>
-                  {ledger.demo && (
-                    <span className="demo-pill">Sample ledger</span>
-                  )}
+                  <strong>Excel needs attention</strong>
+                  <p>{downloadError || ledger?.workbook?.warning}</p>
                 </div>
               </div>
-              <section
-                className="metrics-grid"
-                aria-label="Monthly financial totals"
+            )}
+            {error && (
+              <div className="error-banner" role="alert">
+                <CircleAlert size={21} />
+                <div>
+                  <strong>We couldn’t load your ledger</strong>
+                  <p>{error}</p>
+                </div>
+                <button
+                  className="secondary-button"
+                  onClick={() => void load()}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+            {loading && !ledger && (
+              <div className="loading-grid" aria-live="polite">
+                <div className="loading-message">
+                  <LoaderCircle size={24} className="spin" />
+                  Opening your {year} ledger…
+                </div>
+                {[1, 2, 3, 4].map((n) => (
+                  <div className="skeleton-card" key={n} />
+                ))}
+                <div className="skeleton-panel" />
+              </div>
+            )}
+            {ledger && current && summary && (
+              <div
+                id="month-content"
+                role="tabpanel"
+                aria-labelledby={`month-tab-${month}`}
+                className={`dashboard-content ${loading ? "refreshing" : ""}`}
               >
-                <article className="metric-card balance-metric">
-                  <div className="metric-label">
-                    Net cash flow
-                    <span>
-                      <Wallet size={17} />
-                    </span>
-                  </div>
-                  <div className="metric-value">
-                    {money(summary.balance, 2)}
-                  </div>
-                  <div className="metric-bottom">
-                    <span>
-                      <i />
-                      Income minus expenses
-                    </span>
-                    <Sparkline
-                      values={series.slice(0, month).map((s) => s.balance)}
-                      color="#93b4ff"
-                    />
-                  </div>
-                  <div className="balance-detail">
-                    <span>
-                      Income<strong>{money(summary.income)}</strong>
+                <div className="profile-workbook-bar">
+                  <div>
+                    <span className="workbook-icon">
+                      <FileSpreadsheet size={20} />
                     </span>
                     <span>
-                      Expenses<strong>{money(summary.expense)}</strong>
+                      <strong>
+                        {ledger.workbook?.fileName ||
+                          `${profileName} · ${year}`}
+                      </strong>
+                      <small>Your personal workbook · 12 monthly tabs</small>
                     </span>
                   </div>
-                </article>
-                <article className="metric-card">
-                  <div className="metric-label">
-                    Monthly spending
-                    <span className="metric-icon lavender">
-                      <ArrowUpRight size={18} />
-                    </span>
-                  </div>
-                  <div className="metric-value">
-                    {money(summary.expense, 2)}
-                  </div>
-                  <div className="metric-bottom">
-                    <span
-                      className={
-                        change !== null && change > 0
-                          ? "change-amber"
-                          : "change-green"
-                      }
-                    >
-                      {change === null
-                        ? "No prior month comparison"
-                        : `${change > 0 ? "+" : ""}${change.toFixed(1)}% vs. ${MONTHS[month - 2].slice(0, 3)}`}
-                    </span>
-                    <Sparkline
-                      values={series.slice(0, month).map((s) => s.expense)}
-                      color="#8b6cef"
-                    />
-                  </div>
-                  <div className="metric-footnote">
-                    {
-                      current.transactions.filter((t) => t.type === "EXPENSE")
-                        .length
-                    }{" "}
-                    expense transactions this month
-                  </div>
-                </article>
-                <article className="metric-card">
-                  <div className="metric-label">
-                    Budget remaining
-                    <span className="metric-icon blue">
-                      <Target size={18} />
-                    </span>
-                  </div>
-                  <div
-                    className={`metric-value ${summary.remaining < 0 ? "over-budget" : ""}`}
+                  <button
+                    className="secondary-button"
+                    disabled={controlsBusy || loading || !ledger.workbook}
+                    onClick={() => void downloadExcel()}
                   >
-                    {money(summary.remaining, 2)}
-                  </div>
-                  <div className="budget-mini-track">
-                    <span
-                      style={{
-                        width: `${Math.min(100, budgetUsed)}%`,
-                        background: budgetUsed > 100 ? "#df7469" : undefined,
-                      }}
-                    />
-                  </div>
-                  <div className="metric-footnote">
-                    {summary.budget
-                      ? `${Math.round(budgetUsed)}% of ${money(summary.budget)} allocated`
-                      : "Set a monthly budget to get started"}
-                  </div>
-                </article>
-                <article className="metric-card">
-                  <div className="metric-label">
-                    Savings rate
-                    <span className="metric-icon mint">
-                      <TrendingUp size={18} />
+                    {downloading ? (
+                      <LoaderCircle size={16} className="spin" />
+                    ) : (
+                      <FileSpreadsheet size={16} />
+                    )}
+                    <span>{downloading ? "Preparing…" : "Download Excel"}</span>
+                  </button>
+                </div>
+                <div className="period-caption">
+                  <h2>
+                    {MONTHS[month - 1]} <span>{year}</span>
+                  </h2>
+                  <div>
+                    <span className="save-status">
+                      <CheckCircle2 size={14} />
+                      {lastSaved
+                        ? `Saved at ${lastSaved.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}`
+                        : "Loaded from your ledger"}
                     </span>
+                    {ledger.demo && (
+                      <span className="demo-pill">Sample ledger</span>
+                    )}
                   </div>
-                  <div className="metric-value">
-                    {summary.income ? summary.savingsRate.toFixed(1) : "—"}
-                    <small>{summary.income ? "%" : ""}</small>
-                  </div>
-                  <div className="metric-bottom">
-                    <span className="change-green">
-                      {summary.income
-                        ? `${money(summary.balance)} retained`
-                        : "Add income to calculate"}
-                    </span>
-                    <Sparkline
-                      values={series.slice(0, month).map((s) => s.savingsRate)}
-                      color="#20aa91"
-                    />
-                  </div>
-                  <div className="metric-footnote">
-                    Unspent income as a share of income
-                  </div>
-                </article>
-              </section>
-              <div className="charts-row">
-                <section className="panel cashflow-panel" id="cashflow">
-                  <div className="panel-heading">
-                    <div>
-                      <h2>Cash flow</h2>
-                      <p>See the bigger picture, month by month.</p>
-                    </div>
-                    <div className="segmented-control">
-                      <button
-                        className={range === "six" ? "selected" : ""}
-                        onClick={() => setRange("six")}
-                      >
-                        6 months
-                      </button>
-                      <button
-                        className={range === "year" ? "selected" : ""}
-                        onClick={() => setRange("year")}
-                      >
-                        Full year
-                      </button>
-                    </div>
-                  </div>
-                  <div className="cashflow-summary">
-                    <div>
+                </div>
+                <section
+                  className="metrics-grid"
+                  aria-label="Monthly financial totals"
+                >
+                  <article className="metric-card balance-metric">
+                    <div className="metric-label">
+                      Net cash flow
                       <span>
-                        Income <i style={{ background: "#4263eb" }} />
+                        <Wallet size={17} />
                       </span>
-                      <strong>
-                        {money(
-                          sum(
-                            series
-                              .slice(
-                                range === "six" ? Math.max(0, month - 6) : 0,
-                                range === "six" ? month : 12,
-                              )
-                              .map((s) => s.income),
-                          ),
-                        )}
-                      </strong>
                     </div>
-                    <div>
+                    <div className="metric-value">
+                      {money(summary.balance, 2)}
+                    </div>
+                    <div className="metric-bottom">
                       <span>
-                        Expenses <i style={{ background: "#24aa97" }} />
+                        <i />
+                        Income minus expenses
                       </span>
-                      <strong>
-                        {money(
-                          sum(
-                            series
-                              .slice(
-                                range === "six" ? Math.max(0, month - 6) : 0,
-                                range === "six" ? month : 12,
-                              )
-                              .map((s) => s.expense),
-                          ),
-                        )}
-                      </strong>
+                      <Sparkline
+                        values={series.slice(0, month).map((s) => s.balance)}
+                        color="#93b4ff"
+                      />
                     </div>
-                    <span className="chart-period">
-                      {range === "year"
-                        ? `Jan – Dec ${year}`
-                        : `${MONTHS[Math.max(0, month - 6)].slice(0, 3)} – ${MONTHS[month - 1].slice(0, 3)} ${year}`}
-                    </span>
-                  </div>
-                  <CashflowChart ledger={ledger} month={month} range={range} />
+                    <div className="balance-detail">
+                      <span>
+                        Income<strong>{money(summary.income)}</strong>
+                      </span>
+                      <span>
+                        Expenses<strong>{money(summary.expense)}</strong>
+                      </span>
+                    </div>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-label">
+                      Monthly spending
+                      <span className="metric-icon lavender">
+                        <ArrowUpRight size={18} />
+                      </span>
+                    </div>
+                    <div className="metric-value">
+                      {money(summary.expense, 2)}
+                    </div>
+                    <div className="metric-bottom">
+                      <span
+                        className={
+                          change !== null && change > 0
+                            ? "change-amber"
+                            : "change-green"
+                        }
+                      >
+                        {change === null
+                          ? "No prior month comparison"
+                          : `${change > 0 ? "+" : ""}${change.toFixed(1)}% vs. ${MONTHS[month - 2].slice(0, 3)}`}
+                      </span>
+                      <Sparkline
+                        values={series.slice(0, month).map((s) => s.expense)}
+                        color="#8b6cef"
+                      />
+                    </div>
+                    <div className="metric-footnote">
+                      {
+                        current.transactions.filter((t) => t.type === "EXPENSE")
+                          .length
+                      }{" "}
+                      expense transactions this month
+                    </div>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-label">
+                      Budget remaining
+                      <span className="metric-icon blue">
+                        <Target size={18} />
+                      </span>
+                    </div>
+                    <div
+                      className={`metric-value ${summary.remaining < 0 ? "over-budget" : ""}`}
+                    >
+                      {money(summary.remaining, 2)}
+                    </div>
+                    <div className="budget-mini-track">
+                      <span
+                        style={{
+                          width: `${Math.min(100, budgetUsed)}%`,
+                          background: budgetUsed > 100 ? "#df7469" : undefined,
+                        }}
+                      />
+                    </div>
+                    <div className="metric-footnote">
+                      {summary.budget
+                        ? `${Math.round(budgetUsed)}% of ${money(summary.budget)} allocated`
+                        : "Set a monthly budget to get started"}
+                    </div>
+                  </article>
+                  <article className="metric-card">
+                    <div className="metric-label">
+                      Savings rate
+                      <span className="metric-icon mint">
+                        <TrendingUp size={18} />
+                      </span>
+                    </div>
+                    <div className="metric-value">
+                      {summary.income ? summary.savingsRate.toFixed(1) : "—"}
+                      <small>{summary.income ? "%" : ""}</small>
+                    </div>
+                    <div className="metric-bottom">
+                      <span className="change-green">
+                        {summary.income
+                          ? `${money(summary.balance)} retained`
+                          : "Add income to calculate"}
+                      </span>
+                      <Sparkline
+                        values={series
+                          .slice(0, month)
+                          .map((s) => s.savingsRate)}
+                        color="#20aa91"
+                      />
+                    </div>
+                    <div className="metric-footnote">
+                      Unspent income as a share of income
+                    </div>
+                  </article>
                 </section>
-                <section className="panel breakdown-panel">
-                  <div className="panel-heading">
-                    <div>
-                      <h2>Spending breakdown</h2>
-                      <p>Every category, accounted for.</p>
+                <div className="charts-row">
+                  <section className="panel cashflow-panel" id="cashflow">
+                    <div className="panel-heading">
+                      <div>
+                        <h2>Cash flow</h2>
+                        <p>See the bigger picture, month by month.</p>
+                      </div>
+                      <div className="segmented-control">
+                        <button
+                          className={range === "six" ? "selected" : ""}
+                          onClick={() => setRange("six")}
+                        >
+                          6 months
+                        </button>
+                        <button
+                          className={range === "year" ? "selected" : ""}
+                          onClick={() => setRange("year")}
+                        >
+                          Full year
+                        </button>
+                      </div>
                     </div>
-                    <span className="soft-icon">
-                      <Layers3 size={18} />
-                    </span>
-                  </div>
-                  <div className="donut-container">
-                    <SpendingDonut month={current} />
-                    <div className="donut-label">
-                      <span>Total expenses</span>
-                      <strong>{money(summary.expense)}</strong>
-                      <small>
-                        {expenses.filter((c) => c.total > 0).length} categories
-                      </small>
-                    </div>
-                  </div>
-                  <div className="category-legend">
-                    {expenses.map(({ category: c, total }) => (
-                      <div key={c}>
+                    <div className="cashflow-summary">
+                      <div>
                         <span>
-                          <i style={{ background: CATEGORY[c].color }} />
-                          {CATEGORY[c].label}
+                          Income{" "}
+                          <i
+                            style={{
+                              background: "var(--chart-income, #4263eb)",
+                            }}
+                          />
                         </span>
-                        <strong>{money(total)}</strong>
+                        <strong>
+                          {money(
+                            sum(
+                              series
+                                .slice(
+                                  range === "six" ? Math.max(0, month - 6) : 0,
+                                  range === "six" ? month : 12,
+                                )
+                                .map((s) => s.income),
+                            ),
+                          )}
+                        </strong>
+                      </div>
+                      <div>
+                        <span>
+                          Expenses{" "}
+                          <i
+                            style={{
+                              background: "var(--chart-expense, #24aa97)",
+                            }}
+                          />
+                        </span>
+                        <strong>
+                          {money(
+                            sum(
+                              series
+                                .slice(
+                                  range === "six" ? Math.max(0, month - 6) : 0,
+                                  range === "six" ? month : 12,
+                                )
+                                .map((s) => s.expense),
+                            ),
+                          )}
+                        </strong>
+                      </div>
+                      <span className="chart-period">
+                        {range === "year"
+                          ? `Jan – Dec ${year}`
+                          : `${MONTHS[Math.max(0, month - 6)].slice(0, 3)} – ${MONTHS[month - 1].slice(0, 3)} ${year}`}
+                      </span>
+                    </div>
+                    <CashflowChart
+                      ledger={ledger}
+                      month={month}
+                      range={range}
+                    />
+                  </section>
+                  <section className="panel breakdown-panel">
+                    <div className="panel-heading">
+                      <div>
+                        <h2>Spending breakdown</h2>
+                        <p>Every category, accounted for.</p>
+                      </div>
+                      <span className="soft-icon">
+                        <Layers3 size={18} />
+                      </span>
+                    </div>
+                    <div className="donut-container">
+                      <SpendingDonut month={current} categories={categories} />
+                      <div className="donut-label">
+                        <span>Total expenses</span>
+                        <strong>{money(summary.expense)}</strong>
                         <small>
-                          {summary.expense
-                            ? Math.round((total / summary.expense) * 100)
-                            : 0}
-                          %
+                          {expenses.filter((c) => c.total > 0).length}{" "}
+                          categories
                         </small>
                       </div>
-                    ))}
-                  </div>
-                </section>
-              </div>
-              <div className="detail-row">
-                <section className="panel budgets-panel" id="budgets">
-                  <div className="panel-heading">
-                    <div>
-                      <h2>Budget performance</h2>
-                      <p>Your plan, in progress.</p>
                     </div>
-                    <button
-                      className="text-button"
-                      onClick={() => openDialog({ kind: "budgets" })}
-                    >
-                      <Pencil size={15} />
-                      Edit budgets
-                    </button>
-                  </div>
-                  <div className="budget-table-header">
-                    <span>CATEGORY</span>
-                    <span>SPENT / BUDGET</span>
-                  </div>
-                  <div className="budget-rows">
-                    {expenses.map(({ category: c, total }) => {
-                      const limit = current.budgets[c],
-                        used = limit ? (total / limit) * 100 : total ? 100 : 0;
-                      return (
+                    <div className="category-legend">
+                      {expenses.map(({ category: c, total }) => (
+                        <div key={c}>
+                          <span>
+                            <i style={{ background: CATEGORY[c].color }} />
+                            {CATEGORY[c].label}
+                          </span>
+                          <strong>{money(total)}</strong>
+                          <small>
+                            {summary.expense
+                              ? Math.round((total / summary.expense) * 100)
+                              : 0}
+                            %
+                          </small>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                </div>
+                <div className="detail-row">
+                  <section className="panel budgets-panel" id="budgets">
+                    <div className="panel-heading">
+                      <div>
+                        <h2>Budget performance</h2>
+                        <p>Your plan, in progress.</p>
+                      </div>
+                      <div className="budget-header-actions">
                         <button
-                          key={c}
-                          className="budget-row"
+                          className="text-button"
                           onClick={() => openDialog({ kind: "budgets" })}
-                          aria-label={`Edit ${CATEGORY[c].label} budget, ${money(total)} spent of ${money(limit)}`}
                         >
-                          <div className="budget-row-title">
-                            <span
-                              className="category-square"
-                              style={{
-                                color: CATEGORY[c].color,
-                                background: `${CATEGORY[c].color}14`,
-                              }}
-                            >
-                              {CATEGORY[c].label.slice(0, 1)}
-                            </span>
-                            <strong>{CATEGORY[c].label}</strong>
-                            <span
-                              className={total > limit ? "over-budget" : ""}
-                            >
-                              {money(total)} <small>/ {money(limit)}</small>
-                            </span>
-                          </div>
-                          <div className="budget-row-bottom">
-                            <div className="progress-track">
-                              <span
-                                style={{
-                                  width: `${Math.min(100, used)}%`,
-                                  background:
-                                    total > limit
-                                      ? "#df7469"
-                                      : CATEGORY[c].color,
-                                }}
-                              />
-                            </div>
-                            <span>
-                              {limit
-                                ? `${Math.round(used)}%`
-                                : total
-                                  ? "Over"
-                                  : "—"}
-                            </span>
-                          </div>
+                          <Pencil size={15} />
+                          Edit budgets
                         </button>
-                      );
-                    })}
-                  </div>
-                  <div
-                    className={`budget-insight ${summary.remaining < 0 ? "warning" : ""}`}
-                  >
-                    <Sparkles size={17} />
-                    <span>
-                      {summary.budget === 0
-                        ? "Give every dollar a purpose. Set your first budget."
-                        : summary.remaining >= 0
-                          ? `${money(summary.remaining)} of breathing room in your monthly plan.`
-                          : `Spending is ${money(-summary.remaining)} above your monthly plan.`}
-                    </span>
-                  </div>
-                </section>
-                <SpendingCalendar month={current} year={year} />
+                        <button
+                          className="text-button"
+                          onClick={() => openDialog({ kind: "categories" })}
+                        >
+                          <SlidersHorizontal size={15} />
+                          Manage categories
+                        </button>
+                      </div>
+                    </div>
+                    <p className="budget-carry-note">
+                      <RefreshCw size={13} />
+                      {current.budgetOrigin === "CARRIED" &&
+                      current.budgetSource
+                        ? `Carried from ${budgetSourceLabel(current.budgetSource)} · Edit for this month`
+                        : current.budgetOrigin === "MANUAL"
+                          ? "This plan repeats in following months"
+                          : "Set a budget once. It repeats each month."}
+                    </p>
+                    <div className="budget-table-header">
+                      <span>CATEGORY</span>
+                      <span>SPENT / BUDGET</span>
+                    </div>
+                    {!expenses.length && (
+                      <div className="category-empty">
+                        <Layers3 size={24} />
+                        <p>Add a category to start planning your budget.</p>
+                        <button
+                          className="secondary-button"
+                          onClick={() => openDialog({ kind: "categories" })}
+                        >
+                          Add a category
+                        </button>
+                      </div>
+                    )}
+                    <div className="budget-rows">
+                      {expenses.map(({ category: c, total, active }) => {
+                        const limit = current.budgets[c] ?? 0,
+                          used = limit
+                            ? (total / limit) * 100
+                            : total
+                              ? 100
+                              : 0;
+                        return (
+                          <button
+                            key={c}
+                            className="budget-row"
+                            onClick={() => openDialog({ kind: "budgets" })}
+                            aria-label={`Edit ${CATEGORY[c].label} budget, ${money(total)} spent of ${money(limit)}`}
+                          >
+                            <div className="budget-row-title">
+                              <span
+                                className="category-square"
+                                style={{
+                                  color: CATEGORY[c].color,
+                                  background: `${CATEGORY[c].color}14`,
+                                }}
+                              >
+                                {CATEGORY[c].label.slice(0, 1)}
+                              </span>
+                              <strong>
+                                {CATEGORY[c].label}
+                                {!active && (
+                                  <small className="removed-category-label">
+                                    Removed · history kept
+                                  </small>
+                                )}
+                              </strong>
+                              <span
+                                className={total > limit ? "over-budget" : ""}
+                              >
+                                {money(total)} <small>/ {money(limit)}</small>
+                              </span>
+                            </div>
+                            <div className="budget-row-bottom">
+                              <div className="progress-track">
+                                <span
+                                  style={{
+                                    width: `${Math.min(100, used)}%`,
+                                    background:
+                                      total > limit
+                                        ? "#df7469"
+                                        : CATEGORY[c].color,
+                                  }}
+                                />
+                              </div>
+                              <span>
+                                {limit
+                                  ? `${Math.round(used)}%`
+                                  : total
+                                    ? "Over"
+                                    : "—"}
+                              </span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div className="budget-savings-row">
+                      <span className="budget-savings-icon">
+                        <PiggyBank size={21} />
+                      </span>
+                      <div>
+                        <strong>Savings</strong>
+                        <small>Income not assigned to category budgets</small>
+                      </div>
+                      <strong>{money(summary.savings, 2)}</strong>
+                    </div>
+                    {summary.budgetShortfall > 0 && (
+                      <p className="budget-plan-warning budget-panel-warning">
+                        Budget allocations exceed recorded income by{" "}
+                        {money(summary.budgetShortfall, 2)}.
+                      </p>
+                    )}
+                    {!summary.income && (
+                      <p className="budget-savings-help">
+                        Add this month's income to calculate unassigned savings.
+                      </p>
+                    )}
+                    <div
+                      className={`budget-insight ${summary.remaining < 0 ? "warning" : ""}`}
+                    >
+                      <Sparkles size={17} />
+                      <span>
+                        {summary.budget === 0
+                          ? "Give every dollar a purpose. Set your first budget."
+                          : summary.remaining >= 0
+                            ? `${money(summary.remaining)} of breathing room in your monthly plan.`
+                            : `Spending is ${money(-summary.remaining)} above your monthly plan.`}
+                      </span>
+                    </div>
+                  </section>
+                  <SpendingCalendar month={current} year={year} />
+                </div>
+                <Transactions
+                  categories={categories}
+                  month={current}
+                  year={year}
+                  onAdd={() => openDialog({ kind: "transaction" })}
+                  onEdit={(transaction) =>
+                    openDialog({ kind: "transaction", transaction })
+                  }
+                  onDelete={(transaction) =>
+                    openDialog({ kind: "delete", transaction })
+                  }
+                />
+                <footer className="page-footer">
+                  <span>
+                    <ShieldCheck size={15} />
+                    Your data stays on your computer.
+                  </span>
+                  <span>
+                    Hisabo <span>·</span> {year} ledger <span>·</span> USD
+                  </span>
+                </footer>
               </div>
-              <Transactions
-                month={current}
-                year={year}
-                onAdd={() => openDialog({ kind: "transaction" })}
-                onEdit={(transaction) =>
-                  openDialog({ kind: "transaction", transaction })
-                }
-                onDelete={(transaction) =>
-                  openDialog({ kind: "delete", transaction })
-                }
-              />
-              <footer className="page-footer">
-                <span>
-                  <ShieldCheck size={15} />
-                  Your data stays on your computer.
-                </span>
-                <span>
-                  Hisabo <span>·</span> {year} ledger <span>·</span> USD
-                </span>
-              </footer>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </main>
       <nav className="mobile-nav" aria-label="Mobile navigation">
@@ -1415,6 +1808,23 @@ export default function App() {
           </button>
         ))}
       </nav>
+      {profilesOpen && (
+        <Modal
+          title="Your profiles"
+          subtitle="One app. A separate space for each budget."
+          busy={profileBusy}
+          onClose={() => setProfilesOpen(false)}
+        >
+          <ProfileManager
+            profiles={profiles}
+            activeId={profileId}
+            busy={profileBusy}
+            setBusy={setProfileBusy}
+            onSelect={selectProfile}
+            onSaved={profileSaved}
+          />
+        </Modal>
+      )}
       {dialog && ledger && current && (
         <Modal
           title={
@@ -1422,22 +1832,27 @@ export default function App() {
               ? dialog.transaction
                 ? "Edit transaction"
                 : "New transaction"
-              : dialog.kind === "budgets"
-                ? "Shape your monthly budget"
-                : "Delete transaction?"
+              : dialog.kind === "categories"
+                ? "Manage categories"
+                : dialog.kind === "budgets"
+                  ? "Shape your monthly budget"
+                  : "Delete transaction?"
           }
           subtitle={
             dialog.kind === "transaction"
               ? "A clear record starts with the details."
-              : dialog.kind === "budgets"
-                ? `${MONTHS[month - 1]} ${year} · Spending limits in USD`
-                : "This removes the transaction from your saved ledger."
+              : dialog.kind === "categories"
+                ? `${profileName} · Categories apply across all months and years`
+                : dialog.kind === "budgets"
+                  ? `${MONTHS[month - 1]} ${year} · Spending limits in USD`
+                  : "This removes the transaction from your saved ledger."
           }
           busy={busy}
           onClose={() => setDialog(null)}
         >
           {dialog.kind === "transaction" ? (
             <TransactionForm
+              categories={categories}
               transaction={dialog.transaction}
               year={year}
               month={month}
@@ -1446,23 +1861,54 @@ export default function App() {
               onClose={() => setDialog(null)}
               onSave={(draft, id) =>
                 void mutate(
-                  () => api.saveTransaction(year, ledger.revision, draft, id),
+                  () =>
+                    api.saveTransaction(
+                      profileId,
+                      year,
+                      ledger.revision,
+                      draft,
+                      id,
+                    ),
                   id
                     ? "Transaction updated and saved."
                     : "Transaction added and saved.",
                 )
               }
             />
+          ) : dialog.kind === "categories" ? (
+            <CategoryManager
+              supported={!!ledger.categories}
+              catalog={
+                ledger.categories ?? { revision: 0, entries: categories }
+              }
+              busy={busy}
+              error={dialogError}
+              onClose={() => setDialog(null)}
+              onSave={(catalog) =>
+                void mutate(
+                  () => api.categories(profileId, year, catalog),
+                  "Budget categories saved for this profile.",
+                )
+              }
+            />
           ) : dialog.kind === "budgets" ? (
             <BudgetForm
+              categories={categories}
               month={current}
               busy={busy}
               error={dialogError}
               onClose={() => setDialog(null)}
               onSave={(budgets) =>
                 void mutate(
-                  () => api.budgets(year, month, ledger.revision, budgets),
-                  "Monthly budgets saved.",
+                  () =>
+                    api.budgets(
+                      profileId,
+                      year,
+                      month,
+                      ledger.revision,
+                      budgets,
+                    ),
+                  "Budget saved. Following months will use this plan unless they have their own budget.",
                 )
               }
             />
@@ -1492,6 +1938,7 @@ export default function App() {
                     void mutate(
                       () =>
                         api.deleteTransaction(
+                          profileId,
                           year,
                           ledger.revision,
                           dialog.transaction.id,

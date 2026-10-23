@@ -8,9 +8,16 @@ import {
   AriaComponent,
 } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
+import { useChartColors } from "./theme";
 import type { EChartsCoreOption } from "echarts/core";
 import type { MonthLedger, YearLedger } from "./types";
-import { annualSeries, CATEGORY, EXPENSE_CATEGORIES, money, sum } from "./data";
+import {
+  annualSeries,
+  categoryMap,
+  visibleBudgetCategories,
+  money,
+  sum,
+} from "./data";
 echarts.use([
   LineChart,
   PieChart,
@@ -20,7 +27,7 @@ echarts.use([
   AriaComponent,
   CanvasRenderer,
 ]);
-function Chart({
+export function Chart({
   option,
   label,
   className = "",
@@ -31,22 +38,38 @@ function Chart({
 }) {
   const ref = useRef<HTMLDivElement>(null),
     chart = useRef<echarts.EChartsType | null>(null);
+  const latestOption = useRef(option);
+  latestOption.current = option;
   useEffect(() => {
-    if (!ref.current) return;
-    const instance = echarts.init(ref.current);
-    chart.current = instance;
+    const element = ref.current;
+    if (!element) return;
     let frame = 0;
+    const resize = () => {
+      // A profile can keep another workspace hidden; initialize once it has a real size.
+      if (!element.clientWidth || !element.clientHeight) return;
+      if (!chart.current) {
+        chart.current = echarts.init(element);
+        chart.current.setOption(
+          {
+            ...latestOption.current,
+            animation: !window.matchMedia("(prefers-reduced-motion: reduce)")
+              .matches,
+            aria: { enabled: true },
+          },
+          true,
+        );
+      } else chart.current.resize();
+    };
     const observer = new ResizeObserver(() => {
       cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        if (!instance.isDisposed()) instance.resize();
-      });
+      frame = requestAnimationFrame(resize);
     });
-    observer.observe(ref.current);
+    observer.observe(element);
+    resize();
     return () => {
       observer.disconnect();
       cancelAnimationFrame(frame);
-      instance.dispose();
+      chart.current?.dispose();
       chart.current = null;
     };
   }, []);
@@ -79,18 +102,19 @@ export function CashflowChart({
   month: number;
   range: "six" | "year";
 }) {
+  const colors = useChartColors();
   const series = annualSeries(ledger);
   const rows =
     range === "six" ? series.slice(Math.max(0, month - 6), month) : series;
   const option: EChartsCoreOption = {
-    color: ["#4263eb", "#24aa97"],
+    color: [colors.income, colors.expense],
     textStyle: { fontFamily: "Inter, system-ui, sans-serif" },
     grid: { left: 54, right: 15, top: 18, bottom: 30 },
     tooltip: {
       trigger: "axis",
-      backgroundColor: "#101c34",
+      backgroundColor: colors.tooltip,
       borderWidth: 0,
-      textStyle: { color: "#fff" },
+      textStyle: { color: colors.tooltipText },
       valueFormatter: (v: unknown) => money(Number(v), 2),
     },
     xAxis: {
@@ -99,17 +123,17 @@ export function CashflowChart({
       data: rows.map((r) => r.month),
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: "#8892a5", fontSize: 12, margin: 14 },
+      axisLabel: { color: colors.text, fontSize: 12, margin: 14 },
     },
     yAxis: {
       type: "value",
       splitNumber: 4,
       axisLabel: {
-        color: "#8892a5",
+        color: colors.text,
         fontSize: 12,
         formatter: (v: number) => (v >= 1000 ? `$${v / 1000}k` : `$${v}`),
       },
-      splitLine: { lineStyle: { color: "#edf0f5", type: "dashed" } },
+      splitLine: { lineStyle: { color: colors.grid, type: "dashed" } },
     },
     series: [
       {
@@ -122,8 +146,8 @@ export function CashflowChart({
         lineStyle: { width: 3 },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: "#4263eb25" },
-            { offset: 1, color: "#4263eb00" },
+            { offset: 0, color: `${colors.income}25` },
+            { offset: 1, color: `${colors.income}00` },
           ]),
         },
         data: rows.map((r) => r.income),
@@ -138,8 +162,8 @@ export function CashflowChart({
         lineStyle: { width: 3 },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: "#24aa9717" },
-            { offset: 1, color: "#24aa9700" },
+            { offset: 0, color: `${colors.expense}17` },
+            { offset: 1, color: `${colors.expense}00` },
           ]),
         },
         data: rows.map((r) => r.expense),
@@ -154,8 +178,16 @@ export function CashflowChart({
     />
   );
 }
-export function SpendingDonut({ month }: { month: MonthLedger }) {
-  const data = EXPENSE_CATEGORIES.map((c) => ({
+export function SpendingDonut({
+  month,
+  categories,
+}: {
+  month: MonthLedger;
+  categories: import("./types").BudgetCategory[];
+}) {
+  const colors = useChartColors();
+  const CATEGORY = categoryMap(categories);
+  const data = visibleBudgetCategories(categories, month).map(({ id: c }) => ({
     name: CATEGORY[c].label,
     value: sum(
       month.transactions.filter((t) => t.category === c).map((t) => t.amount),
@@ -168,11 +200,12 @@ export function SpendingDonut({ month }: { month: MonthLedger }) {
       className="donut-chart"
       option={{
         tooltip: {
+          renderMode: "richText",
           trigger: "item",
-          formatter: "{b}<br/>{c} USD ({d}%)",
+          formatter: "{b}\n{c} USD ({d}%)",
           borderWidth: 0,
-          backgroundColor: "#101c34",
-          textStyle: { color: "#fff" },
+          backgroundColor: colors.tooltip,
+          textStyle: { color: colors.tooltipText },
         },
         series: [
           {
@@ -189,7 +222,7 @@ export function SpendingDonut({ month }: { month: MonthLedger }) {
                   {
                     name: "No expenses",
                     value: 1,
-                    itemStyle: { color: "#edf0f5" },
+                    itemStyle: { color: colors.empty },
                     tooltip: { show: false },
                   },
                 ],

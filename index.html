@@ -1,1 +1,45 @@
-<!doctype html><html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><meta name="theme-color" content="#101c34"/><meta name="description" content="Hisabo — a clear view of your money, with monthly budgets and a persistent personal ledger."/><link rel="icon" href="/favicon.svg" type="image/svg+xml"/><title>Hisabo · Financial workspace</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101c34" />
+    <meta
+      name="description"
+      content="Hisabo — a clear view of your money, with monthly budgets and a persistent personal ledger."
+    />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Hisabo · Financial workspace</title>
+    <style>
+      html {
+        background: #f4f6fa;
+      }
+      html[data-theme="dark"] {
+        background: #0b1220;
+        color-scheme: dark;
+      }
+    </style>
+    <script>
+      // Apply the saved theme before the app loads to avoid a bright flash.
+      (function () {
+        var preference;
+        try {
+          preference = localStorage.getItem("hisabo.theme");
+        } catch (e) {}
+        var theme =
+          preference === "light" || preference === "dark"
+            ? preference
+            : window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        document.documentElement.dataset.theme = theme;
+        document.querySelector('meta[name="theme-color"]').content =
+          theme === "dark" ? "#0b1220" : "#f4f6fa";
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

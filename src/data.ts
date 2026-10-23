@@ -1,5 +1,6 @@
 import type {
   Category,
+  BudgetCategory,
   ExpenseCategory,
   MonthLedger,
   Transaction,
@@ -38,6 +39,25 @@ export const CATEGORY: Record<Category, { label: string; color: string }> = {
   FREELANCE: { label: "Freelance", color: "#55b990" },
   OTHER_INCOME: { label: "Other income", color: "#3eafae" },
 };
+export const DEFAULT_BUDGET_CATEGORIES: BudgetCategory[] =
+  EXPENSE_CATEGORIES.map((id) => ({ id, ...CATEGORY[id], active: true }));
+export function categoryMap(categories: BudgetCategory[]) {
+  return {
+    ...CATEGORY,
+    ...Object.fromEntries(categories.map((c) => [c.id, c])),
+  };
+}
+export function visibleBudgetCategories(
+  categories: BudgetCategory[],
+  month: MonthLedger,
+) {
+  return categories.filter(
+    (c) =>
+      c.active ||
+      (month.budgets[c.id] ?? 0) > 0 ||
+      month.transactions.some((t) => t.category === c.id),
+  );
+}
 export const ACCOUNT = {
   CHECKING: "Checking",
   CREDIT: "Credit card",
@@ -70,10 +90,16 @@ export function summarize(month: MonthLedger) {
     income,
     expense,
     budget,
+    savings: Math.max(0, cents(income) - cents(budget)) / 100,
+    budgetShortfall: Math.max(0, cents(budget) - cents(income)) / 100,
     balance: (cents(income) - cents(expense)) / 100,
     remaining: (cents(budget) - cents(expense)) / 100,
     savingsRate: income ? ((income - expense) / income) * 100 : 0,
   };
+}
+export function budgetSourceLabel(source: string) {
+  const [year, month] = source.split("-").map(Number);
+  return `${MONTHS[month - 1]} ${year}`;
 }
 export function dailySpending(month: MonthLedger, year: number) {
   const days = new Date(year, month.number, 0).getDate();
@@ -98,14 +124,16 @@ export function filterTransactions(
   query: string,
   filter: string,
   sort: "newest" | "oldest" | "amount",
+  categories: BudgetCategory[] = DEFAULT_BUDGET_CATEGORIES,
 ) {
   const q = query.trim().toLowerCase();
+  const labels = categoryMap(categories);
   return rows
     .filter(
       (t) =>
         (filter === "ALL" || t.type === filter) &&
         (t.description.toLowerCase().includes(q) ||
-          CATEGORY[t.category].label.toLowerCase().includes(q) ||
+          (labels[t.category]?.label ?? t.category).toLowerCase().includes(q) ||
           ACCOUNT[t.account].toLowerCase().includes(q)),
     )
     .sort((a, b) =>
