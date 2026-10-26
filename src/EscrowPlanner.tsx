@@ -119,12 +119,11 @@ export default function EscrowPlanner({
     >
       <div className="panel-heading">
         <div>
-          <span className="overline">MATCH YOUR MORTGAGE STATEMENT</span>
           <h2 id="escrow-heading">
             <CalendarDays size={18} />
             Monthly mortgage overview
           </h2>
-          <p>Your payment, escrow, and remaining balance in one place.</p>
+          <p>Your payment, escrow, and remaining balance in one place</p>
         </div>
         <div
           className="escrow-year-controls"
@@ -185,7 +184,7 @@ export default function EscrowPlanner({
           {monthlyHousingPayment == null
             ? "Calculate to update the projection"
             : firstPaymentDate
-              ? `${shortDate(firstPaymentDate)} · including escrow, before extras`
+              ? `${shortDate(firstPaymentDate)}, including escrow, before extras`
               : "No remaining payment in this projection"}
         </small>
       </div>
@@ -346,7 +345,7 @@ export default function EscrowPlanner({
                             aria-controls={
                               isEditing ? `escrow-editor-${month}` : undefined
                             }
-                            title={`${source} · Click to edit`}
+                            title={`${source}. Select to edit.`}
                             disabled={disabled || !supported}
                             onClick={() =>
                               setEditingMonth(isEditing ? null : month)
@@ -524,7 +523,7 @@ export default function EscrowPlanner({
         <p role="status">
           <span className={`escrow-status-dot ${dirty ? "is-unsaved" : ""}`} />
           {dirty
-            ? "Unsaved changes · calculate or save to update totals"
+            ? "Unsaved changes. Calculate or save to update totals."
             : "Saved with this mortgage profile"}
         </p>
         <div>

@@ -8,12 +8,6 @@ import type { HomeSale, MortgageView } from "./mortgage";
 import { estimateHomeSale, saleDraft, saleInput } from "./homeSale";
 import type { HomeSaleDraft } from "./homeSale";
 
-const compactMoney = new Intl.NumberFormat("en-US", {
-  style: "currency",
-  currency: "USD",
-  notation: "compact",
-  maximumFractionDigits: 1,
-});
 
 export default function HomeSaleCalculator({
   view,
@@ -178,26 +172,43 @@ export default function HomeSaleCalculator({
           </strong>
         </div>
       </div>
-      <div className="home-sale-deductions">
-        <span>
-          Mortgage{" "}
-          <b>
-            {compactMoney.format(
-              estimate?.mortgagePayoff ?? view.loan!.balance,
+      <div className="home-sale-breakdown">
+        <div>
+          <span>Mortgage payoff</span>
+          <span>
+            −{money(estimate?.mortgagePayoff ?? view.loan!.balance, 2)}
+          </span>
+        </div>
+        {estimate && (
+          <>
+            <div>
+              <span>
+                Agent fee{input ? `, ${input.agentFeePercent}%` : ""}
+              </span>
+              <span>−{money(estimate.agentFee, 2)}</span>
+            </div>
+            <div>
+              <span>Closing costs and credits</span>
+              <span>−{money(estimate.sellingCosts - estimate.agentFee, 2)}</span>
+            </div>
+            {(input?.otherLoans ?? 0) > 0 && (
+              <div>
+                <span>Other loans</span>
+                <span>−{money(input?.otherLoans ?? 0, 2)}</span>
+              </div>
             )}
-          </b>
-        </span>
-        <span aria-hidden="true">·</span>
-        <span>
-          Costs + loans{" "}
-          <b>
-            {estimate
-              ? compactMoney.format(
-                  estimate.sellingCosts + (input?.otherLoans ?? 0),
-                )
-              : "—"}
-          </b>
-        </span>
+            {input?.taxEnabled && (
+              <div>
+                <span>Tax reserve, set aside</span>
+                <span>−{money(estimate.taxReserve, 2)}</span>
+              </div>
+            )}
+            <div className="total">
+              <span>{shortfall ? "Amount needed" : "Cash in hand"}</span>
+              <span>{money(Math.abs(estimate.cashInHand), 2)}</span>
+            </div>
+          </>
+        )}
       </div>
       <footer className="home-sale-footer">
         <span id="home-sale-status" role="status">
@@ -214,7 +225,7 @@ export default function HomeSaleCalculator({
               Save estimate
             </button>
           ) : (
-            `${taxStatus} · Estimate`
+            `${taxStatus}, estimate`
           )}
         </span>
         <button
@@ -224,7 +235,7 @@ export default function HomeSaleCalculator({
           disabled={working || unsupported}
           onClick={edit}
         >
-          Costs &amp; taxes <ChevronRight size={14} />
+          Costs and taxes <ChevronRight size={14} />
         </button>
       </footer>
       {!open &&
@@ -251,8 +262,8 @@ export default function HomeSaleCalculator({
           >
             <header className="dialog-heading">
               <div>
-                <span className="overline">HOME SALE ESTIMATE</span>
-                <h2 id="home-sale-dialog-title">Costs &amp; taxes</h2>
+                <span className="overline">Home sale estimate</span>
+                <h2 id="home-sale-dialog-title">Costs and taxes</h2>
                 <p>Adjust the details. See what you could take home.</p>
               </div>
               <button

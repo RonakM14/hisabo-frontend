@@ -56,7 +56,7 @@ function PaymentEditor({
     >
       <header className="dialog-heading">
         <div>
-          <span className="overline">EXTRA PRINCIPAL</span>
+          <span className="overline">Extra principal</span>
           <h2 id="payment-dialog-title">
             {editing ? "Edit payment" : "Add one-time payment"}
           </h2>
@@ -233,7 +233,6 @@ export default function OneTimePayments({
     >
       <header className="lump-sum-heading">
         <div>
-          <span className="overline">YOUR LUMP-SUM PAYMENTS</span>
           <h2 id="one-time-title">
             One-time payments{" "}
             <span
@@ -337,7 +336,7 @@ export default function OneTimePayments({
                     {result && result.status !== "APPLIED" && (
                       <small className="one-time-capped">
                         {result.status === "NOT_APPLIED"
-                          ? "Not applied · paid off"
+                          ? "Not applied, paid off"
                           : `${money(result.applied, 2)} applied`}
                       </small>
                     )}

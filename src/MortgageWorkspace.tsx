@@ -1,8 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import {
-  ArrowDownRight,
-  CalendarDays,
   CheckCircle2,
   CircleAlert,
   FileSpreadsheet,
@@ -22,6 +20,8 @@ import EscrowPlanner from "./EscrowPlanner";
 import OneTimePayments from "./OneTimePayments";
 import HomeSaleCalculator from "./HomeSaleCalculator";
 import { money, sum } from "./data";
+import { motion } from "motion/react";
+import { AnimatedBar, AnimatedNumber, easeOut } from "./motion";
 import type {
   MortgageAnalysis,
   MortgageInput,
@@ -126,6 +126,33 @@ function inputFrom(draft: Draft): MortgageInput {
     },
   };
 }
+const yearsMonths = (months: number) => {
+  const years = Math.floor(months / 12),
+    rest = months % 12;
+  return (
+    [
+      years ? `${years} ${years === 1 ? "year" : "years"}` : "",
+      rest ? `${rest} ${rest === 1 ? "month" : "months"}` : "",
+    ]
+      .filter(Boolean)
+      .join(" ") || "0 months"
+  );
+};
+const shortMonth = (iso: string) =>
+  new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", {
+    month: "short",
+    year: "numeric",
+  });
+const monthsBetween = (a: string, b: string) => {
+  const [ay, am] = a.split("-").map(Number),
+    [by, bm] = b.split("-").map(Number);
+  return (by - ay) * 12 + (bm - am);
+};
+const rise = (delay = 0) => ({
+  initial: { opacity: 0, y: 14 },
+  animate: { opacity: 1, y: 0 },
+  transition: { duration: 0.5, delay, ease: easeOut },
+});
 function Field({
   label,
   hint,
@@ -223,6 +250,39 @@ export default function MortgageWorkspace({
   const current = fingerprint === analyzedInput ? analysis : null;
   const dirty = fingerprint !== savedInput;
   const detailsLocked = !!view?.loan && !editingDetails;
+  const now = new Date();
+  const todayIso = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const loanStart =
+    draft.startDate || view?.loan?.startDate || draft.balanceDate || todayIso;
+  const timeline = current
+    ? (() => {
+        const total = Math.max(
+          1,
+          monthsBetween(loanStart, current.baseline.payoffDate),
+        );
+        const clamp = (n: number) => Math.max(0, Math.min(100, n));
+        const todayPos = clamp(
+          (monthsBetween(loanStart, todayIso) / total) * 100,
+        );
+        const accPos = clamp(
+          (monthsBetween(loanStart, current.accelerated.payoffDate) / total) *
+            100,
+        );
+        return {
+          todayPos,
+          accPos,
+          paid: todayPos,
+          remaining: Math.max(0, accPos - todayPos),
+          saved: Math.max(0, 100 - accPos),
+        };
+      })()
+    : null;
+  const oneTimeTotal = sum(draft.oneTimePayments.map((p) => Number(p.amount)));
+  const extraNote = `${
+    Number(draft.monthlyExtra) > 0
+      ? `${money(Number(draft.monthlyExtra), 0)} a month`
+      : "No monthly extra"
+  }${oneTimeTotal > 0 ? ` plus ${money(oneTimeTotal, 0)} one-time` : ""}`;
   function editDetails() {
     setEditingDetails(true);
     setStatus("");
@@ -431,26 +491,25 @@ export default function MortgageWorkspace({
   );
   return (
     <section className="mortgage-workspace" aria-label="Mortgage planner">
-      <div className="page-heading">
+      <motion.div className="page-heading" {...rise()}>
         <div>
-          <span className="overline">HOME & MORTGAGE</span>
-          <h1>
-            A clearer path to <span>paid off.</span>
-          </h1>
+          <span className="overline">Home and mortgage</span>
+          <h1>Mortgage planner</h1>
           <p>
-            <strong>{name}</strong> · Plan your payoff. Make room for what’s
-            next.
+            <strong>{name}</strong>
+            {view?.loan
+              ? `, ${view.loan.annualRate}% fixed, ${money(
+                  view.loan.monthlyPayment ?? view.analysis?.monthlyPayment ?? 0,
+                  2,
+                )} a month${
+                  view.loan.monthlyEscrow
+                    ? ` plus ${money(view.loan.monthlyEscrow, 2)} escrow`
+                    : ""
+                }`
+              : ", enter your loan to start planning"}
           </p>
         </div>
         <div className="heading-actions">
-          <a className="secondary-button" href="#mortgage-escrow">
-            <CalendarDays size={16} />
-            Monthly escrow
-          </a>
-          <a className="secondary-button" href="#mortgage-one-time">
-            <Plus size={16} />
-            One-time payments
-          </a>
           {view?.loan && (
             <button
               className="secondary-button"
@@ -476,8 +535,14 @@ export default function MortgageWorkspace({
             <FileSpreadsheet size={17} />
             Mortgage Excel
           </button>
+          {view?.loan && (
+            <a className="primary-button" href="#mortgage-one-time">
+              <Plus size={17} />
+              Add one-time payment
+            </a>
+          )}
         </div>
-      </div>
+      </motion.div>
       {error && (
         <div className="error-banner" role="alert" ref={errorRef} tabIndex={-1}>
           <CircleAlert size={20} />
@@ -518,8 +583,137 @@ export default function MortgageWorkspace({
       ) : (
         view && (
           <>
-            <div
+            {current && timeline && (
+              <motion.section
+                className="payoff-outlook"
+                aria-label="Payoff outlook"
+                {...rise(0.04)}
+              >
+                <div className="payoff-outlook-main">
+                  <p className="payoff-outlook-label">Debt-free by</p>
+                  <strong className="payoff-outlook-date">
+                    {shortDate(current.accelerated.payoffDate)}
+                  </strong>
+                  <p className="payoff-outlook-gain">
+                    {current.monthsSaved > 0 ? (
+                      <>
+                        <span className="payoff-sooner">
+                          <CheckCircle2 size={13} aria-hidden="true" />
+                          {yearsMonths(current.monthsSaved)} sooner
+                        </span>
+                        than the standard payoff in{" "}
+                        {shortMonth(current.baseline.payoffDate)}
+                      </>
+                    ) : (
+                      "Your payoff date with the payments entered. Add extra principal to bring it closer."
+                    )}
+                  </p>
+                  <div
+                    className="payoff-timeline"
+                    role="img"
+                    aria-label={`Timeline from the loan start in ${shortMonth(loanStart)} to the standard payoff in ${shortMonth(current.baseline.payoffDate)}. Today is ${shortMonth(todayIso)}. With extra payments the loan ends in ${shortMonth(current.accelerated.payoffDate)}.`}
+                  >
+                    <div className="payoff-timeline-bar">
+                      <AnimatedBar percent={timeline.paid} color="#ffffff3a" />
+                      <AnimatedBar
+                        percent={timeline.remaining}
+                        color="linear-gradient(90deg, #4263eb, #93a6fb)"
+                      />
+                      <AnimatedBar
+                        percent={timeline.saved}
+                        color="repeating-linear-gradient(135deg, #5bd0b4 0 4px, #2f8f78 4px 8px)"
+                      />
+                    </div>
+                    <i
+                      className="payoff-tick today"
+                      style={{ left: `${timeline.todayPos}%` }}
+                      aria-hidden="true"
+                    />
+                    {current.monthsSaved > 0 && (
+                      <i
+                        className="payoff-tick payoff"
+                        style={{ left: `${timeline.accPos}%` }}
+                        aria-hidden="true"
+                      />
+                    )}
+                    {timeline.todayPos > 12 && (
+                      <span className="payoff-lab start" aria-hidden="true">
+                        <b>{shortMonth(loanStart)}</b>Loan start
+                      </span>
+                    )}
+                    <span
+                      className="payoff-lab today"
+                      style={{ left: `${timeline.todayPos}%` }}
+                      aria-hidden="true"
+                    >
+                      <b>Today</b>
+                      {shortMonth(todayIso)}
+                    </span>
+                    {current.monthsSaved > 0 && timeline.accPos < 86 && (
+                      <span
+                        className="payoff-lab payoff"
+                        style={{ left: `${timeline.accPos}%` }}
+                        aria-hidden="true"
+                      >
+                        <b>{shortMonth(current.accelerated.payoffDate)}</b>
+                        With extra principal
+                      </span>
+                    )}
+                    <span className="payoff-lab end" aria-hidden="true">
+                      <b>{shortMonth(current.baseline.payoffDate)}</b>
+                      {current.monthsSaved > 0 ? "Standard payoff" : "Payoff"}
+                    </span>
+                  </div>
+                </div>
+                <dl className="payoff-outlook-stats">
+                  <div>
+                    <dt>Interest saved</dt>
+                    <dd className="mint">
+                      <AnimatedNumber
+                        value={current.interestSaved}
+                        format={(n) => money(n, 2)}
+                      />
+                    </dd>
+                    <small>Future interest avoided</small>
+                  </div>
+                  <div>
+                    <dt>Extra principal applied</dt>
+                    <dd>
+                      <AnimatedNumber
+                        value={current.accelerated.extraPrincipal}
+                        format={(n) => money(n, 0)}
+                      />
+                    </dd>
+                    <small>{extraNote}</small>
+                  </div>
+                  <div>
+                    <dt>Payments left</dt>
+                    <dd>
+                      <AnimatedNumber
+                        value={current.accelerated.months}
+                        format={(n) => String(Math.round(n))}
+                      />
+                    </dd>
+                    <small>{yearsMonths(current.accelerated.months)}</small>
+                  </div>
+                  <div>
+                    <dt>Total interest</dt>
+                    <dd>
+                      <AnimatedNumber
+                        value={current.accelerated.interest}
+                        format={(n) => money(n, 0)}
+                      />
+                    </dd>
+                    <small>
+                      instead of {money(current.baseline.interest, 0)}
+                    </small>
+                  </div>
+                </dl>
+              </motion.section>
+            )}
+            <motion.div
               className={`mortgage-layout ${analysis ? "has-analysis" : ""}`}
+              {...rise(0.1)}
             >
               <div className="mortgage-inputs panel">
                 <form
@@ -536,7 +730,9 @@ export default function MortgageWorkspace({
                     <div>
                       <h2 id="mortgage-details-title">Your mortgage details</h2>
                       <p>
-                        Use the principal balance from your latest statement.
+                        {detailsLocked
+                          ? "Saved from your latest statement"
+                          : "Use the principal balance from your latest statement."}
                       </p>
                     </div>
                   </div>
@@ -567,10 +763,58 @@ export default function MortgageWorkspace({
                       )}
                     </div>
                   )}
+                  {detailsLocked && view.loan ? (
+                    <div className="loan-summary" id="mortgage-detail-fields">
+                      <div className="loan-tiles">
+                        <div className="loan-tile">
+                          <span>Balance</span>
+                          <strong>{money(view.loan.balance, 0)}</strong>
+                          <small>as of {shortDate(view.loan.balanceDate)}</small>
+                        </div>
+                        <div className="loan-tile">
+                          <span>Rate</span>
+                          <strong>{view.loan.annualRate}%</strong>
+                          <small>
+                            {view.loan.interestConvention === "MONTHLY"
+                              ? "fixed, monthly"
+                              : "fixed, semiannual"}
+                          </small>
+                        </div>
+                        <div className="loan-tile">
+                          <span>Payment</span>
+                          <strong>
+                            {money(
+                              view.loan.monthlyPayment ??
+                                view.analysis?.monthlyPayment ??
+                                0,
+                              2,
+                            )}
+                          </strong>
+                          <small>principal and interest</small>
+                        </div>
+                        <div className="loan-tile">
+                          <span>Escrow</span>
+                          <strong>{money(view.loan.monthlyEscrow, 2)}</strong>
+                          <small>taxes and insurance</small>
+                        </div>
+                      </div>
+                      <p className="mortgage-save-hint">
+                        From your latest statement.{" "}
+                        <button
+                          type="button"
+                          className="text-link"
+                          disabled={busy}
+                          onClick={editDetails}
+                        >
+                          Edit details
+                        </button>
+                      </p>
+                    </div>
+                  ) : (
                   <fieldset
                     id="mortgage-detail-fields"
                     className="mortgage-detail-fields"
-                    disabled={busy || detailsLocked}
+                    disabled={busy}
                     aria-labelledby="mortgage-details-title"
                   >
                     <div className="form-grid">
@@ -673,14 +917,15 @@ export default function MortgageWorkspace({
                         }
                       >
                         <option value="MONTHLY">
-                          Fixed rate · annual rate ÷ 12
+                          Fixed rate, annual rate divided by 12
                         </option>
                         <option value="CANADIAN_SEMIANNUAL">
-                          Fixed rate · Canadian semiannual compounding
+                          Fixed rate, Canadian semiannual compounding
                         </option>
                       </select>
                     </Field>
                   </fieldset>
+                  )}
                   <div className="mortgage-section-title extra-title">
                     <span>
                       <Sparkles size={20} />
@@ -745,8 +990,8 @@ export default function MortgageWorkspace({
                   </div>
                   <p className="mortgage-save-hint">
                     {dirty
-                      ? "Unsaved inputs · calculate to preview, or save to keep them."
-                      : "Plan saved to this profile’s XML and Excel workbook."}
+                      ? "Unsaved inputs. Calculate to preview, or save to keep them."
+                      : "Plan saved to this profile and its Excel workbook."}
                   </p>
                 </form>
                 {view.loan && view.analysis && (
@@ -759,58 +1004,6 @@ export default function MortgageWorkspace({
                 )}
               </div>
               <div className="mortgage-results">
-                {current && (
-                  <section
-                    className="payoff-hero"
-                    aria-label="Mortgage payoff summary"
-                  >
-                    <div className="payoff-hero-main">
-                      <h2 className="payoff-hero-heading">
-                        <House size={19} aria-hidden="true" />
-                        Your projected debt-free day
-                      </h2>
-                      <strong className="payoff-hero-date">
-                        {shortDate(current.accelerated.payoffDate)}
-                      </strong>
-                      <p className="payoff-hero-gain">
-                        {current.monthsSaved > 0 && (
-                          <Sparkles size={15} aria-hidden="true" />
-                        )}
-                        <span>
-                          {current.monthsSaved > 0
-                            ? `${Math.floor(current.monthsSaved / 12)} years and ${current.monthsSaved % 12} months sooner with extra principal.`
-                            : "Your payoff date with the payments entered."}
-                        </span>
-                      </p>
-                      <dl className="payoff-hero-footer">
-                        <div>
-                          <dt>Standard payoff</dt>
-                          <dd>{shortDate(current.baseline.payoffDate)}</dd>
-                        </div>
-                        <div>
-                          <dt>Extra principal applied</dt>
-                          <dd>
-                            {money(current.accelerated.extraPrincipal, 2)}
-                          </dd>
-                        </div>
-                      </dl>
-                    </div>
-                    <div className="payoff-hero-savings">
-                      <span className="mortgage-estimate">Estimate</span>
-                      <div className="payoff-interest-saved">
-                        <span
-                          className="payoff-savings-icon"
-                          aria-hidden="true"
-                        >
-                          <ArrowDownRight size={19} />
-                        </span>
-                        <span>Interest saved</span>
-                        <strong>{money(current.interestSaved, 2)}</strong>
-                        <small>Future interest avoided</small>
-                      </div>
-                    </div>
-                  </section>
-                )}
                 <OneTimePayments
                   key={profileId}
                   payments={draft.oneTimePayments}
@@ -841,7 +1034,6 @@ export default function MortgageWorkspace({
                     <div>
                       <House size={36} />
                     </div>
-                    <span className="overline">YOUR HOME. YOUR PLAN.</span>
                     <h2>
                       {analysis
                         ? "Ready to compare your new scenario?"
@@ -866,7 +1058,8 @@ export default function MortgageWorkspace({
                   </div>
                 )}
               </div>
-            </div>
+            </motion.div>
+            <motion.div {...rise(0.16)}>
             <EscrowPlanner
               defaultAmount={draft.monthlyEscrow}
               startDate={draft.startDate}
@@ -881,17 +1074,15 @@ export default function MortgageWorkspace({
               dirty={dirty}
               onChange={(entries) => change("escrowChanges", entries)}
             />
-            <section className="panel home-improvements">
+            </motion.div>
+            <motion.section className="panel home-improvements" {...rise(0.22)}>
               <div className="panel-heading">
                 <div>
                   <h2>
                     <Hammer size={20} />
-                    Home improvements & expansion
+                    Home improvements and expansion
                   </h2>
-                  <p>
-                    Keep renovation, extension, and repair spending in one
-                    place.
-                  </p>
+                  <p>Renovation, extension, and repair spending in one place</p>
                 </div>
                 <div className="improvement-total">
                   <small>All-time spending</small>
@@ -921,7 +1112,7 @@ export default function MortgageWorkspace({
                   <input
                     value={expenseDraft.project}
                     maxLength={80}
-                    placeholder="e.g. Kitchen expansion"
+                    placeholder="Kitchen expansion"
                     required
                     disabled={busy}
                     onChange={(e) =>
@@ -936,7 +1127,7 @@ export default function MortgageWorkspace({
                   <input
                     value={expenseDraft.description}
                     maxLength={160}
-                    placeholder="e.g. Cabinets and installation"
+                    placeholder="Cabinets and installation"
                     required
                     disabled={busy}
                     onChange={(e) =>
@@ -1000,7 +1191,8 @@ export default function MortgageWorkspace({
                   </select>
                 </label>
                 <span>
-                  {shownExpenses.length} expenses ·{" "}
+                  {shownExpenses.length}{" "}
+                  {shownExpenses.length === 1 ? "expense" : "expenses"},{" "}
                   {money(sum(shownExpenses.map((e) => e.amount)), 2)}
                 </span>
               </div>
@@ -1010,9 +1202,11 @@ export default function MortgageWorkspace({
                     <thead>
                       <tr>
                         <th>Date</th>
-                        <th>Project / description</th>
+                        <th>Project</th>
                         <th>Amount</th>
-                        <th>Actions</th>
+                        <th>
+                          <span className="sr-only">Actions</span>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1026,7 +1220,7 @@ export default function MortgageWorkspace({
                           <td>{money(item.amount, 2)}</td>
                           <td>
                             {deletingExpense === item.id ? (
-                              <div className="expense-actions">
+                              <div className="expense-actions is-confirming">
                                 <button
                                   className="danger-button"
                                   disabled={busy}
@@ -1083,11 +1277,10 @@ export default function MortgageWorkspace({
                 </p>
               )}
               <p className="mortgage-save-hint">
-                These costs are tracked here and in the mortgage workbook. They
-                are not automatically added to the monthly budget or financed
-                into the loan.
+                Tracked here and in the mortgage workbook. Not added to the
+                monthly budget or financed into the loan.
               </p>
-            </section>
+            </motion.section>
             <details className="mortgage-assumptions">
               <summary>How this estimate works</summary>
               {(
@@ -1110,7 +1303,7 @@ export default function MortgageWorkspace({
                 >
                   How mortgage amortization works
                 </a>{" "}
-                ·{" "}
+                and{" "}
                 <a
                   href="https://www.consumerfinance.gov/ask-cfpb/what-is-a-prepayment-penalty-en-1957/"
                   target="_blank"

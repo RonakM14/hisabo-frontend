@@ -14,6 +14,7 @@ import {
   BarChart3,
   Building2,
   CalendarDays,
+  CalendarPlus,
   Check,
   CheckCircle2,
   ChevronDown,
@@ -49,6 +50,7 @@ import {
   budgetSourceLabel,
   categoryMap,
   categorySpending,
+  cents,
   DEFAULT_BUDGET_CATEGORIES,
   visibleBudgetCategories,
   dailySpending,
@@ -83,10 +85,10 @@ import {
   AnimatedNumber,
   easeOut,
   navSpring,
-  popIn,
   riseIn,
   staggerGroup,
 } from "./motion";
+const INCOME_CATEGORIES = ["SALARY", "FREELANCE", "OTHER_INCOME"];
 
 const today = new Date();
 type DialogState =
@@ -527,7 +529,7 @@ function SpendingCalendar({
       <div className="panel-heading">
         <div>
           <h2>Spending calendar</h2>
-          <p>A daily view of where your money goes.</p>
+          <p>Hover a day to see its entries</p>
         </div>
         <span className="quiet-badge">
           <CalendarDays size={14} />
@@ -539,13 +541,7 @@ function SpendingCalendar({
           <span key={d}>{d}</span>
         ))}
       </div>
-      <motion.div
-        className="calendar-grid"
-        key={`${year}-${month.number}`}
-        initial="hidden"
-        animate="show"
-        variants={{ hidden: {}, show: { transition: { staggerChildren: 0.012 } } }}
-      >
+      <div className="calendar-grid">
         {Array.from({ length: start }, (_, i) => (
           <span key={`blank-${i}`} className="calendar-empty" />
         ))}
@@ -553,17 +549,22 @@ function SpendingCalendar({
           const intensity = amount
             ? Math.max(0.12, Math.sqrt(Math.abs(amount) / max))
             : 0;
+          const entries = month.transactions.filter(
+            (t) => t.type === "EXPENSE" && Number(t.date.slice(8)) === i + 1,
+          ).length;
           const description =
             amount < 0
               ? `${money(-amount, 2)} net refund`
               : `${money(amount, 2)} net spent`;
+          const isToday =
+            year === today.getFullYear() &&
+            month.number === today.getMonth() + 1 &&
+            i + 1 === today.getDate();
           return (
-            <motion.div
-              variants={popIn}
-              className={`calendar-day ${intensity > 0.65 ? "dark-day" : ""}`}
+            <div
+              className={`calendar-day ${intensity > 0.65 ? "dark-day" : ""} ${isToday ? "today" : ""}`}
               key={i}
               tabIndex={0}
-              title={`${MONTHS[month.number - 1]} ${i + 1}: ${description}`}
               aria-label={`${MONTHS[month.number - 1]} ${i + 1}, ${description}`}
               style={{
                 background: amount
@@ -579,14 +580,20 @@ function SpendingCalendar({
                     : Math.round(amount)}
                 </small>
               )}
-            </motion.div>
+              {entries > 0 && (
+                <span className="calendar-tip" aria-hidden="true">
+                  {entries} {entries === 1 ? "entry" : "entries"},{" "}
+                  {money(Math.abs(amount), 2)}
+                  {amount < 0 ? " refunded" : ""}
+                </span>
+              )}
+            </div>
           );
         })}
-      </motion.div>
+      </div>
       <div className="calendar-footer">
         <span>
-          <strong>{activeDays}</strong> spending days{" "}
-          <span className="separator-dot">·</span>{" "}
+          <strong>{activeDays}</strong> spending days,{" "}
           <strong>{elapsed - activeDays}</strong> no-spend days
         </span>
         <div className="heat-legend">
@@ -605,18 +612,67 @@ function Transactions({
   categories,
   month,
   year,
+  busy,
+  quickError,
   onAdd,
+  onQuickAdd,
   onEdit,
   onDelete,
 }: {
   categories: BudgetCategory[];
   month: MonthLedger;
   year: number;
+  busy: boolean;
+  quickError: string;
   onAdd: () => void;
+  onQuickAdd: (draft: TransactionDraft) => Promise<boolean>;
   onEdit: (t: Transaction) => void;
   onDelete: (t: Transaction) => void;
 }) {
   const CATEGORY = categoryMap(categories);
+  const activeCategories = categories.filter((c) => c.active);
+  const defaultDate = () => {
+    const day =
+      year === today.getFullYear() && month.number === today.getMonth() + 1
+        ? today.getDate()
+        : 1;
+    return `${year}-${String(month.number).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  };
+  const [quickDescription, setQuickDescription] = useState(""),
+    [quickAmount, setQuickAmount] = useState(""),
+    [quickCategory, setQuickCategory] = useState(
+      activeCategories[0]?.id ?? "SALARY",
+    ),
+    [quickDate, setQuickDate] = useState(defaultDate),
+    [quickHint, setQuickHint] = useState("");
+  useEffect(() => {
+    setQuickDate(defaultDate());
+    setQuickHint("");
+    // The default date follows the month being viewed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [month.number, year]);
+  async function quickAdd(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const amount = Number(quickAmount);
+    if (!amount) {
+      setQuickHint("Enter a non-zero amount. A negative expense is a refund.");
+      return;
+    }
+    setQuickHint("");
+    const income = INCOME_CATEGORIES.includes(quickCategory);
+    const saved = await onQuickAdd({
+      type: income ? "INCOME" : "EXPENSE",
+      description: quickDescription.trim(),
+      amount: income ? Math.abs(amount) : amount,
+      category: quickCategory,
+      account: "CHECKING",
+      date: quickDate,
+    });
+    if (saved) {
+      setQuickDescription("");
+      setQuickAmount("");
+    }
+  }
   const [query, setQuery] = useState(""),
     [filter, setFilter] = useState("ALL"),
     [sort, setSort] = useState<"newest" | "oldest" | "amount">("newest"),
@@ -634,9 +690,19 @@ function Transactions({
     [month, deferredQuery, filter, sort, categories],
   );
   useEffect(() => setPage(1), [query, filter, sort, month.number, year]);
-  const pages = Math.max(1, Math.ceil(rows.length / 7)),
+  const PAGE = 10;
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE)),
     current = Math.min(page, pages),
-    visible = rows.slice((current - 1) * 7, current * 7);
+    visible = rows.slice((current - 1) * PAGE, current * PAGE);
+  const groups = visible.reduce<{ date: string; rows: Transaction[] }[]>(
+    (list, t) => {
+      const last = list[list.length - 1];
+      if (last && last.date === t.date) last.rows.push(t);
+      else list.push({ date: t.date, rows: [t] });
+      return list;
+    },
+    [],
+  );
   return (
     <motion.section
       className="panel transactions-panel"
@@ -649,7 +715,7 @@ function Transactions({
             Transaction activity{" "}
             <span className="count-pill">{month.transactions.length}</span>
           </h2>
-          <p>Every movement, in one place.</p>
+          <p>Grouped by day, newest first</p>
         </div>
         <button className="text-button" onClick={onAdd}>
           <Plus size={16} />
@@ -702,15 +768,80 @@ function Transactions({
           </label>
         </div>
       </div>
+      <form className="quick-add" aria-label="Quick add" onSubmit={quickAdd}>
+        <label>
+          Description
+          <input
+            required
+            maxLength={120}
+            placeholder="What was this for?"
+            value={quickDescription}
+            onChange={(e) => setQuickDescription(e.target.value)}
+            disabled={busy}
+          />
+        </label>
+        <label>
+          Category
+          <select
+            value={quickCategory}
+            onChange={(e) => setQuickCategory(e.target.value)}
+            disabled={busy}
+          >
+            {activeCategories.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+            {INCOME_CATEGORIES.map((id) => (
+              <option key={id} value={id}>
+                {CATEGORY[id].label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Amount
+          <input
+            required
+            type="number"
+            step="0.01"
+            inputMode="decimal"
+            placeholder="0.00"
+            value={quickAmount}
+            onChange={(e) => setQuickAmount(e.target.value)}
+            disabled={busy}
+          />
+        </label>
+        <label>
+          Date
+          <input
+            required
+            type="date"
+            min={`${year}-01-01`}
+            max={`${year}-12-31`}
+            value={quickDate}
+            onChange={(e) => setQuickDate(e.target.value)}
+            disabled={busy}
+          />
+        </label>
+        <button className="primary-button" disabled={busy}>
+          {busy ? <LoaderCircle size={16} className="spin" /> : <Plus size={16} />}
+          Add
+        </button>
+        {(quickHint || quickError) && (
+          <p className="quick-add-error" role="alert">
+            {quickHint || quickError}
+          </p>
+        )}
+      </form>
       <div className="table-scroll">
         <table>
           <thead>
             <tr>
-              <th>TRANSACTION</th>
-              <th>CATEGORY</th>
-              <th>ACCOUNT</th>
-              <th>DATE</th>
-              <th className="text-right">AMOUNT</th>
+              <th>Transaction</th>
+              <th>Category</th>
+              <th>Account</th>
+              <th className="text-right">Amount</th>
               <th>
                 <span className="sr-only">Actions</span>
               </th>
@@ -722,7 +853,16 @@ function Transactions({
             animate={{ opacity: 1 }}
             transition={{ duration: 0.25 }}
           >
-            {visible.map((t) => (
+            {groups.map((group) => [
+              <tr className="day-row" key={`day-${group.date}`}>
+                <td colSpan={5}>
+                  {new Date(`${group.date}T12:00:00`).toLocaleDateString(
+                    "en-US",
+                    { weekday: "short", month: "short", day: "numeric" },
+                  )}
+                </td>
+              </tr>,
+              ...group.rows.map((t) => (
               <tr key={t.id}>
                 <td>
                   <div className="merchant">
@@ -760,12 +900,6 @@ function Transactions({
                 <td>
                   <span className="account-name">{ACCOUNT[t.account]}</span>
                 </td>
-                <td className="date-cell">
-                  {new Date(`${t.date}T12:00:00`).toLocaleDateString("en-US", {
-                    month: "short",
-                    day: "2-digit",
-                  })}
-                </td>
                 <td
                   className={`amount-cell ${t.type === "INCOME" || isRefund(t) ? "income-amount" : ""}`}
                 >
@@ -791,7 +925,8 @@ function Transactions({
                   </div>
                 </td>
               </tr>
-            ))}
+              )),
+            ])}
           </motion.tbody>
         </table>
         {!rows.length && (
@@ -819,7 +954,7 @@ function Transactions({
       <div className="table-footer">
         <span>
           {rows.length
-            ? `${(current - 1) * 7 + 1}–${Math.min(current * 7, rows.length)} of ${rows.length} transactions`
+            ? `${(current - 1) * PAGE + 1} to ${Math.min(current * PAGE, rows.length)} of ${rows.length} transactions`
             : "0 transactions"}
         </span>
         <div className="pagination">
@@ -862,6 +997,7 @@ export default function App() {
     [range, setRange] = useState<"six" | "year">("six"),
     [toast, setToast] = useState(""),
     [navigation, setNavigation] = useState("overview"),
+    [hoverCategory, setHoverCategory] = useState<string | null>(null),
     [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileId, setProfileId] = useState(() => {
@@ -1039,6 +1175,7 @@ export default function App() {
       setYears((previous) =>
         [...new Set([...previous, result.year])].sort((a, b) => b - a),
       );
+      return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : "Unable to save.";
       setDialogError(message);
@@ -1049,6 +1186,7 @@ export default function App() {
           /* Preserve the form and show the original conflict. */
         }
       }
+      return false;
     } finally {
       setBusy(false);
     }
@@ -1083,6 +1221,92 @@ export default function App() {
     summary && summary.budget > 0
       ? (summary.expense / summary.budget) * 100
       : 0;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const monthState =
+    year < today.getFullYear() ||
+    (year === today.getFullYear() && month < today.getMonth() + 1)
+      ? "past"
+      : year === today.getFullYear() && month === today.getMonth() + 1
+        ? "current"
+        : "future";
+  const dayOfMonth =
+    monthState === "current"
+      ? today.getDate()
+      : monthState === "past"
+        ? daysInMonth
+        : 0;
+  const dayShare = (dayOfMonth / daysInMonth) * 100;
+  const pace = summary
+    ? {
+        marker: monthState === "current" ? dayShare : null,
+        text:
+          summary.expense < 0
+            ? `${money(-summary.expense, 2)} net refund this month`
+            : !summary.budget
+              ? "Set a monthly budget to get started"
+              : monthState === "current"
+                ? `${Math.round(budgetUsed)}% used by day ${dayOfMonth} of ${daysInMonth}, ${
+                    budgetUsed > dayShare + 5
+                      ? "ahead of pace"
+                      : budgetUsed < dayShare - 5
+                        ? "behind pace"
+                        : "on pace"
+                  }`
+                : monthState === "past"
+                  ? `${Math.round(budgetUsed)}% of ${money(summary.budget)} used`
+                  : `${money(summary.budget)} planned for this month`,
+      }
+    : { marker: null, text: "" };
+  const spentShare =
+    summary && summary.income > 0
+      ? Math.max(0, Math.min(100, (summary.expense / summary.income) * 100))
+      : 0;
+  const keptShare = summary && summary.income > 0 ? 100 - spentShare : 0;
+  const budgetRows = current
+    ? expenses
+        .map((e) => {
+          const limit = current.budgets[e.category] ?? 0;
+          return { ...e, limit, left: (cents(limit) - cents(e.total)) / 100 };
+        })
+        .sort((a, b) => b.left - a.left)
+    : [];
+  const hovered = hoverCategory
+    ? expenses.find((e) => e.category === hoverCategory)
+    : undefined;
+  useEffect(() => setHoverCategory(null), [month, year, profileId]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        dialog ||
+        profilesOpen ||
+        showMortgage ||
+        controlsBusy ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.altKey
+      )
+        return;
+      if (
+        target &&
+        (["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName) ||
+          target.isContentEditable ||
+          target.closest('[role="tablist"]'))
+      )
+        return;
+      if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        openDialog({ kind: "transaction" });
+      } else if (e.key === "ArrowLeft")
+        setMonth((m) => (m === 1 ? 12 : m - 1));
+      else if (e.key === "ArrowRight")
+        setMonth((m) => (m === 12 ? 1 : m + 1));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // openDialog reads the latest state through closure each render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialog, profilesOpen, showMortgage, controlsBusy, loading]);
   const navigate = (id: string) => {
     if (controlsBusy) return;
     setWorkspaceView("budget");
@@ -1297,15 +1521,13 @@ export default function App() {
               transition={{ duration: 0.5, ease: easeOut }}
             >
               <div>
-                <span className="overline">YOUR FINANCIAL WORKSPACE</span>
-                <h1>
-                  Financial overview<span>.</span>
-                </h1>
+                <span className="overline">Your financial workspace</span>
+                <h1>Financial overview</h1>
                 <p>
                   <strong className="overview-profile-name">
                     {profileName}
-                  </strong>{" "}
-                  · Clarity today. Confidence for what’s next.
+                  </strong>
+                  , saved on this computer
                 </p>
               </div>
               <div className="heading-actions">
@@ -1320,6 +1542,7 @@ export default function App() {
                 </button>
                 <button
                   className="primary-button"
+                  title="New transaction (N)"
                   onClick={() => openDialog({ kind: "transaction" })}
                   disabled={!ledger || loading || controlsBusy}
                 >
@@ -1467,7 +1690,7 @@ export default function App() {
                         {ledger.workbook?.fileName ||
                           `${profileName} · ${year}`}
                       </strong>
-                      <small>Your personal workbook · 12 monthly tabs</small>
+                      <small>Your workbook, with a tab for each month</small>
                     </span>
                   </div>
                   <button
@@ -1508,13 +1731,15 @@ export default function App() {
                     )}
                   </div>
                 </motion.div>
+                {current.transactions.length ? (
+                <>
                 <motion.section
                   className="metrics-grid"
                   aria-label="Monthly financial totals"
                   variants={staggerGroup}
                 >
                   <motion.article
-                    className="metric-card balance-metric"
+                    className="metric-card balance-metric hero-metric"
                     variants={riseIn}
                   >
                     <div className="metric-label">
@@ -1529,28 +1754,35 @@ export default function App() {
                         format={(n) => money(n, 2)}
                       />
                     </div>
-                    <div className="metric-bottom">
+                    <div className="split-bar" aria-hidden="true">
+                      <AnimatedBar
+                        percent={spentShare}
+                        color="var(--chart-expense, #24aa97)"
+                      />
+                      <AnimatedBar percent={keptShare} color="#93b4ff" />
+                    </div>
+                    <div className="split-detail">
+                      <span>
+                        Spent{" "}
+                        <strong>
+                          <AnimatedNumber
+                            value={summary.expense}
+                            format={(n) => money(n, 2)}
+                          />
+                        </strong>{" "}
+                        <em>of income</em>{" "}
+                        <strong>
+                          <AnimatedNumber
+                            value={summary.income}
+                            format={(n) => money(n, 2)}
+                          />
+                        </strong>
+                      </span>
                       <span>
                         <i />
-                        Income minus expenses
-                      </span>
-                      <Sparkline
-                        values={series.slice(0, month).map((s) => s.balance)}
-                        color="#93b4ff"
-                      />
-                    </div>
-                    <div className="balance-detail">
-                      <span>
-                        Income
-                        <strong>
-                          <AnimatedNumber value={summary.income} format={money} />
-                        </strong>
-                      </span>
-                      <span>
-                        Expenses
-                        <strong>
-                          <AnimatedNumber value={summary.expense} format={money} />
-                        </strong>
+                        {summary.income
+                          ? `Kept ${summary.savingsRate.toFixed(1)}%`
+                          : "No income recorded"}
                       </span>
                     </div>
                   </motion.article>
@@ -1576,7 +1808,7 @@ export default function App() {
                         }
                       >
                         {change === null
-                          ? "No prior month comparison"
+                          ? "No earlier month to compare"
                           : `${change > 0 ? "+" : ""}${change.toFixed(1)}% vs. ${MONTHS[month - 2].slice(0, 3)}`}
                       </span>
                       <Sparkline
@@ -1589,7 +1821,7 @@ export default function App() {
                         current.transactions.filter((t) => t.type === "EXPENSE")
                           .length
                       }{" "}
-                      expense transactions this month
+                      expense transactions
                     </div>
                   </motion.article>
                   <motion.article className="metric-card" variants={riseIn}>
@@ -1607,19 +1839,30 @@ export default function App() {
                         format={(n) => money(n, 2)}
                       />
                     </div>
-                    <div className="budget-mini-track">
-                      <AnimatedBar
-                        percent={budgetUsed}
-                        color={budgetUsed > 100 ? "#df7469" : undefined}
-                      />
+                    <div className="pace-ruler">
+                      <div className="budget-mini-track">
+                        <AnimatedBar
+                          percent={budgetUsed}
+                          color={budgetUsed > 100 ? "#df7469" : undefined}
+                        />
+                      </div>
+                      {pace.marker !== null && (
+                        <>
+                          <i
+                            className="pace-today"
+                            style={{ left: `${pace.marker}%` }}
+                            aria-hidden="true"
+                          />
+                          <span
+                            className="pace-today-label"
+                            style={{ left: `${pace.marker}%` }}
+                          >
+                            Today
+                          </span>
+                        </>
+                      )}
                     </div>
-                    <div className="metric-footnote">
-                      {summary.expense < 0
-                        ? `${money(-summary.expense, 2)} net refund this month`
-                        : summary.budget
-                          ? `${Math.round(budgetUsed)}% of ${money(summary.budget)} used`
-                          : "Set a monthly budget to get started"}
-                    </div>
+                    <div className="metric-footnote">{pace.text}</div>
                   </motion.article>
                   <motion.article className="metric-card" variants={riseIn}>
                     <div className="metric-label">
@@ -1642,7 +1885,7 @@ export default function App() {
                     <div className="metric-bottom">
                       <span className="change-green">
                         {summary.income
-                          ? `${money(summary.balance)} retained`
+                          ? `${money(summary.balance)} kept`
                           : "Add income to calculate"}
                       </span>
                       <Sparkline
@@ -1666,7 +1909,7 @@ export default function App() {
                     <div className="panel-heading">
                       <div>
                         <h2>Cash flow</h2>
-                        <p>See the bigger picture, month by month.</p>
+                        <p>Income and spending by month</p>
                       </div>
                       <div className="segmented-control">
                         <button
@@ -1732,8 +1975,8 @@ export default function App() {
                       </div>
                       <span className="chart-period">
                         {range === "year"
-                          ? `Jan – Dec ${year}`
-                          : `${MONTHS[Math.max(0, month - 6)].slice(0, 3)} – ${MONTHS[month - 1].slice(0, 3)} ${year}`}
+                          ? `Jan to Dec ${year}`
+                          : `${MONTHS[Math.max(0, month - 6)].slice(0, 3)} to ${MONTHS[month - 1].slice(0, 3)} ${year}`}
                       </span>
                     </div>
                     <CashflowChart
@@ -1749,28 +1992,49 @@ export default function App() {
                     <div className="panel-heading">
                       <div>
                         <h2>Spending breakdown</h2>
-                        <p>Every category, accounted for.</p>
+                        <p>Hover a category to see its share</p>
                       </div>
                       <span className="soft-icon">
                         <Layers3 size={18} />
                       </span>
                     </div>
                     <div className="donut-container">
-                      <SpendingDonut month={current} categories={categories} />
+                      <SpendingDonut
+                        month={current}
+                        categories={categories}
+                        highlighted={hoverCategory}
+                        onHover={setHoverCategory}
+                      />
                       <div className="donut-label">
-                        <span>Net expenses</span>
+                        <span>
+                          {hovered ? CATEGORY[hovered.category].label : "Net expenses"}
+                        </span>
                         <strong>
-                          <AnimatedNumber value={summary.expense} format={money} />
+                          {hovered ? (
+                            money(hovered.total, 2)
+                          ) : (
+                            <AnimatedNumber value={summary.expense} format={money} />
+                          )}
                         </strong>
                         <small>
-                          {expenses.filter((c) => c.total > 0).length}{" "}
-                          categories
+                          {hovered
+                            ? hovered.total < 0
+                              ? "Net refund"
+                              : `${positiveSpending ? Math.round((hovered.total / positiveSpending) * 100) : 0}% of spending`
+                            : `${expenses.filter((c) => c.total > 0).length} categories`}
                         </small>
                       </div>
                     </div>
                     <div className="category-legend">
                       {expenses.map(({ category: c, total }) => (
-                        <div key={c}>
+                        <div
+                          key={c}
+                          className={
+                            hoverCategory && hoverCategory !== c ? "dim" : ""
+                          }
+                          onMouseEnter={() => setHoverCategory(c)}
+                          onMouseLeave={() => setHoverCategory(null)}
+                        >
                           <span>
                             <i style={{ background: CATEGORY[c].color }} />
                             {CATEGORY[c].label}
@@ -1801,7 +2065,7 @@ export default function App() {
                     <div className="panel-heading">
                       <div>
                         <h2>Budget performance</h2>
-                        <p>Your plan, in progress.</p>
+                        <p>Sorted by what's left this month</p>
                       </div>
                       <div className="budget-header-actions">
                         <button
@@ -1824,14 +2088,14 @@ export default function App() {
                       <RefreshCw size={13} />
                       {current.budgetOrigin === "CARRIED" &&
                       current.budgetSource
-                        ? `Carried from ${budgetSourceLabel(current.budgetSource)} · Edit for this month`
+                        ? `Carried from ${budgetSourceLabel(current.budgetSource)}. Edit for this month.`
                         : current.budgetOrigin === "MANUAL"
                           ? "This plan repeats in following months"
                           : "Set a budget once. It repeats each month."}
                     </p>
                     <div className="budget-table-header">
-                      <span>CATEGORY</span>
-                      <span>SPENT / BUDGET</span>
+                      <span>Category</span>
+                      <span>Left this month</span>
                     </div>
                     {!expenses.length && (
                       <div className="category-empty">
@@ -1846,13 +2110,12 @@ export default function App() {
                       </div>
                     )}
                     <div className="budget-rows">
-                      {expenses.map(({ category: c, total, active }) => {
-                        const limit = current.budgets[c] ?? 0,
-                          used = limit
-                            ? (total / limit) * 100
-                            : total > 0
-                              ? 100
-                              : 0;
+                      {budgetRows.map(({ category: c, total, active, limit, left }) => {
+                        const used = limit
+                          ? (total / limit) * 100
+                          : total > 0
+                            ? 100
+                            : 0;
                         return (
                           <button
                             key={c}
@@ -1879,9 +2142,23 @@ export default function App() {
                                 )}
                               </strong>
                               <span
-                                className={total > limit ? "over-budget" : ""}
+                                className={
+                                  left < 0 || (left === 0 && total > 0)
+                                    ? "over-budget"
+                                    : ""
+                                }
                               >
-                                {money(total)} <small>/ {money(limit)}</small>
+                                {total < 0
+                                  ? "Credit"
+                                  : left > 0
+                                    ? `${money(left, 2)} left`
+                                    : limit
+                                      ? left === 0
+                                        ? "Nothing left"
+                                        : `Over by ${money(-left, 2)}`
+                                      : total
+                                        ? "No budget set"
+                                        : "—"}
                               </span>
                             </div>
                             <div className="budget-row-bottom">
@@ -1894,13 +2171,7 @@ export default function App() {
                                 />
                               </div>
                               <span>
-                                {total < 0
-                                  ? "Credit"
-                                  : limit
-                                    ? `${Math.round(used)}%`
-                                    : total
-                                      ? "Over"
-                                      : "—"}
+                                {money(total)} / {money(limit)}
                               </span>
                             </div>
                           </button>
@@ -1952,7 +2223,21 @@ export default function App() {
                   categories={categories}
                   month={current}
                   year={year}
+                  busy={busy}
+                  quickError={dialog ? "" : dialogError}
                   onAdd={() => openDialog({ kind: "transaction" })}
+                  onQuickAdd={(draft) =>
+                    mutate(
+                      () =>
+                        api.saveTransaction(
+                          profileId,
+                          year,
+                          ledger.revision,
+                          draft,
+                        ),
+                      "Transaction added and saved.",
+                    )
+                  }
                   onEdit={(transaction) =>
                     openDialog({ kind: "transaction", transaction })
                   }
@@ -1960,14 +2245,52 @@ export default function App() {
                     openDialog({ kind: "delete", transaction })
                   }
                 />
+                </>
+                ) : (
+                  <motion.section
+                    className="panel empty-month"
+                    variants={riseIn}
+                    aria-label="Empty month"
+                  >
+                    <span className="soft-icon">
+                      <CalendarPlus size={26} />
+                    </span>
+                    <h2>{MONTHS[month - 1]} has no entries yet</h2>
+                    <p>
+                      {summary.budget
+                        ? `Your ${money(summary.budget)} budget plan${
+                            current.budgetOrigin === "CARRIED" &&
+                            current.budgetSource
+                              ? ` from ${budgetSourceLabel(current.budgetSource)}`
+                              : ""
+                          } carries into this month. Add the first transaction to bring the overview to life.`
+                        : "Add the first transaction to bring the overview to life, then set a budget to plan the month."}
+                    </p>
+                    <div className="empty-month-actions">
+                      <button
+                        className="primary-button"
+                        onClick={() => openDialog({ kind: "transaction" })}
+                        disabled={controlsBusy}
+                      >
+                        <Plus size={17} />
+                        Add first transaction
+                      </button>
+                      <button
+                        className="secondary-button"
+                        onClick={() => openDialog({ kind: "budgets" })}
+                        disabled={controlsBusy}
+                      >
+                        Edit this month's budget
+                      </button>
+                    </div>
+                  </motion.section>
+                )}
                 <motion.footer className="page-footer" variants={riseIn}>
                   <span>
                     <ShieldCheck size={15} />
                     Your data stays on your computer.
                   </span>
-                  <span>
-                    Hisabo <span>·</span> {year} ledger <span>·</span> USD
-                  </span>
+                  <span>Hisabo, {year} ledger, USD</span>
                 </motion.footer>
               </motion.div>
             )}

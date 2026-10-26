@@ -36,19 +36,28 @@ const chartMotion = {
   animationDurationUpdate: 650,
   animationEasingUpdate: "cubicInOut",
 } satisfies EChartsCoreOption;
+type ChartEvents = Record<string, (params: { data?: unknown }) => void>;
 export function Chart({
   option,
   label,
   className = "",
+  onEvents,
+  instance,
 }: {
   option: EChartsCoreOption;
   label: string;
   className?: string;
+  /** Handlers keyed by ECharts event name; the latest ones are always used. */
+  onEvents?: ChartEvents;
+  /** Receives the chart instance so callers can dispatch actions. */
+  instance?: React.MutableRefObject<echarts.EChartsType | null>;
 }) {
   const ref = useRef<HTMLDivElement>(null),
     chart = useRef<echarts.EChartsType | null>(null);
   const latestOption = useRef(option);
   latestOption.current = option;
+  const latestEvents = useRef(onEvents);
+  latestEvents.current = onEvents;
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -58,6 +67,12 @@ export function Chart({
       if (!element.clientWidth || !element.clientHeight) return;
       if (!chart.current) {
         chart.current = echarts.init(element);
+        if (instance) instance.current = chart.current;
+        Object.keys(latestEvents.current ?? {}).forEach((name) =>
+          chart.current?.on(name, (params: unknown) =>
+            latestEvents.current?.[name]?.(params as { data?: unknown }),
+          ),
+        );
         chart.current.setOption(
           {
             ...latestOption.current,
@@ -80,6 +95,7 @@ export function Chart({
       cancelAnimationFrame(frame);
       chart.current?.dispose();
       chart.current = null;
+      if (instance) instance.current = null;
     };
   }, []);
   useEffect(() => {
@@ -191,21 +207,44 @@ export function CashflowChart({
 export function SpendingDonut({
   month,
   categories,
+  highlighted = null,
+  onHover,
 }: {
   month: MonthLedger;
   categories: import("./types").BudgetCategory[];
+  /** Category id to emphasize, for example from a hovered legend row. */
+  highlighted?: string | null;
+  /** Called with the hovered category id, or null when the pointer leaves. */
+  onHover?: (id: string | null) => void;
 }) {
   const colors = useChartColors();
   const CATEGORY = categoryMap(categories);
+  const instance = useRef<echarts.EChartsType | null>(null);
   const data = visibleBudgetCategories(categories, month).map(({ id: c }) => ({
+    id: c,
     name: CATEGORY[c].label,
     value: categorySpending(month, c),
     itemStyle: { color: CATEGORY[c].color },
   }));
+  const shown = data.filter((d) => d.value > 0);
+  useEffect(() => {
+    const chart = instance.current;
+    if (!chart) return;
+    chart.dispatchAction({ type: "downplay", seriesIndex: 0 });
+    const dataIndex = shown.findIndex((d) => d.id === highlighted);
+    if (dataIndex >= 0)
+      chart.dispatchAction({ type: "highlight", seriesIndex: 0, dataIndex });
+  }, [highlighted, shown]);
   return (
     <Chart
       label={`Spending by category. ${data.map((d) => `${d.name}: ${money(d.value)}`).join(". ")}`}
       className="donut-chart"
+      instance={instance}
+      onEvents={{
+        mouseover: (params) =>
+          onHover?.((params.data as { id?: string } | undefined)?.id ?? null),
+        mouseout: () => onHover?.(null),
+      }}
       option={{
         ...chartMotion,
         tooltip: {
@@ -224,9 +263,10 @@ export function SpendingDonut({
             padAngle: 3,
             itemStyle: { borderRadius: 5 },
             label: { show: false },
-            emphasis: { scale: true, scaleSize: 4 },
-            data: data.some((d) => d.value > 0)
-              ? data.filter((d) => d.value > 0)
+            emphasis: { focus: "self", scale: true, scaleSize: 4 },
+            blur: { itemStyle: { opacity: 0.25 } },
+            data: shown.length
+              ? shown
               : [
                   {
                     name: "No net spending",

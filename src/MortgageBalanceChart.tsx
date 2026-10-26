@@ -156,7 +156,7 @@ export default function MortgageBalanceChart({
       <div className="panel-heading">
         <div>
           <h2 id={`${id}-title`}>Watch your balance fall</h2>
-          <p>Same mortgage. A clearer path to your last payment.</p>
+          <p>Drag the marker to inspect any month</p>
         </div>
       </div>
       <div className="mortgage-chart-toolbar">
@@ -388,7 +388,7 @@ export default function MortgageBalanceChart({
           </div>
         </dl>
         <p className="mortgage-chart-note">
-          Monthly projections · escrow excluded.
+          Monthly projections, escrow excluded.
         </p>
       </div>
     </section>
