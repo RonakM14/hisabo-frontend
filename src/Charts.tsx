@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { easeOut } from "./motion";
 import * as echarts from "echarts/core";
 import { LineChart, PieChart } from "echarts/charts";
 import {
@@ -14,9 +16,9 @@ import type { MonthLedger, YearLedger } from "./types";
 import {
   annualSeries,
   categoryMap,
+  categorySpending,
   visibleBudgetCategories,
   money,
-  sum,
 } from "./data";
 echarts.use([
   LineChart,
@@ -27,6 +29,13 @@ echarts.use([
   AriaComponent,
   CanvasRenderer,
 ]);
+/** Draw-in on first render, eased morph when the data changes. */
+const chartMotion = {
+  animationDuration: 1100,
+  animationEasing: "cubicOut",
+  animationDurationUpdate: 650,
+  animationEasingUpdate: "cubicInOut",
+} satisfies EChartsCoreOption;
 export function Chart({
   option,
   label,
@@ -107,6 +116,7 @@ export function CashflowChart({
   const rows =
     range === "six" ? series.slice(Math.max(0, month - 6), month) : series;
   const option: EChartsCoreOption = {
+    ...chartMotion,
     color: [colors.income, colors.expense],
     textStyle: { fontFamily: "Inter, system-ui, sans-serif" },
     grid: { left: 54, right: 15, top: 18, bottom: 30 },
@@ -189,9 +199,7 @@ export function SpendingDonut({
   const CATEGORY = categoryMap(categories);
   const data = visibleBudgetCategories(categories, month).map(({ id: c }) => ({
     name: CATEGORY[c].label,
-    value: sum(
-      month.transactions.filter((t) => t.category === c).map((t) => t.amount),
-    ),
+    value: categorySpending(month, c),
     itemStyle: { color: CATEGORY[c].color },
   }));
   return (
@@ -199,6 +207,7 @@ export function SpendingDonut({
       label={`Spending by category. ${data.map((d) => `${d.name}: ${money(d.value)}`).join(". ")}`}
       className="donut-chart"
       option={{
+        ...chartMotion,
         tooltip: {
           renderMode: "richText",
           trigger: "item",
@@ -217,10 +226,10 @@ export function SpendingDonut({
             label: { show: false },
             emphasis: { scale: true, scaleSize: 4 },
             data: data.some((d) => d.value > 0)
-              ? data
+              ? data.filter((d) => d.value > 0)
               : [
                   {
-                    name: "No expenses",
+                    name: "No net spending",
                     value: 1,
                     itemStyle: { color: colors.empty },
                     tooltip: { show: false },
@@ -239,6 +248,7 @@ export function Sparkline({
   values: number[];
   color: string;
 }) {
+  const reduce = useReducedMotion();
   const width = 104,
     height = 35,
     max = Math.max(...values, 1),
@@ -255,13 +265,17 @@ export function Sparkline({
       className="sparkline"
       viewBox={`0 0 ${width} ${height}`}
     >
-      <polyline
+      <motion.polyline
+        key={points}
         points={points}
         fill="none"
         stroke={color}
         strokeWidth="2.4"
         strokeLinejoin="round"
         strokeLinecap="round"
+        initial={reduce ? false : { pathLength: 0, opacity: 0 }}
+        animate={{ pathLength: 1, opacity: 1 }}
+        transition={{ duration: 1, ease: easeOut }}
       />
     </svg>
   );

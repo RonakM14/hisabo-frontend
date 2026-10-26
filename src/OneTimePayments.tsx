@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   CalendarDays,
   Pencil,
@@ -172,12 +172,33 @@ export default function OneTimePayments({
     { payment: PaymentDraft; index: number }[]
   >([]);
   const addButton = useRef<HTMLButtonElement>(null);
+  const paymentList = useRef<HTMLUListElement>(null);
   const editorTrigger = useRef<HTMLButtonElement | null>(null);
   const impact = analysis?.oneTimeImpact;
   const results = new Map(
     impact?.payments.map((payment) => [payment.id, payment]),
   );
   const sorted = [...payments].sort((a, b) => a.date.localeCompare(b.date));
+  useLayoutEffect(() => {
+    const list = paymentList.current;
+    if (!list) return;
+    if (payments.length <= 3) {
+      list.style.removeProperty("--lump-sum-list-height");
+      return;
+    }
+    const visibleRows = Array.from(list.children).slice(0, 3);
+    function fitThreeRows() {
+      const height = visibleRows.reduce(
+        (total, row) => total + row.getBoundingClientRect().height,
+        0,
+      );
+      list!.style.setProperty("--lump-sum-list-height", `${height}px`);
+    }
+    fitThreeRows();
+    const observer = new ResizeObserver(fitThreeRows);
+    visibleRows.forEach((row) => observer.observe(row));
+    return () => observer.disconnect();
+  }, [payments, analysis]);
   useEffect(() => {
     setRemoved([]);
   }, [revision]);
@@ -285,7 +306,16 @@ export default function OneTimePayments({
             <span>Balance after</span>
             <span />
           </div>
-          <ul className="lump-sum-list" aria-label="Lump-sum payments">
+          <ul
+            ref={paymentList}
+            className="lump-sum-list"
+            aria-label={
+              payments.length > 3
+                ? "Lump-sum payments, scroll for more"
+                : "Lump-sum payments"
+            }
+            tabIndex={payments.length > 3 ? 0 : undefined}
+          >
             {sorted.map((payment) => {
               const result = results.get(payment.id);
               const application =

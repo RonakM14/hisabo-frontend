@@ -1,5 +1,7 @@
 # Hisabo Frontend
 
+To record a refund, choose **Expense**, enter a negative amount (for example `-6.00`), and select the original spending category. It reduces category spending and total expenses in the entered month. The activity list labels it **Refund** and shows the money returned in green. Both frontend and backend must be updated; restart the Java backend after upgrading. Refunds are retained in the profile's XML and included in its Excel export.
+
 React 19.3 + TypeScript 7 + Vite 8 + Apache ECharts 6. The companion Java 25 project is `hisabo-backend`; both are independent repositories.
 
 ## Quick start — both apps

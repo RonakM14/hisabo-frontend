@@ -48,10 +48,12 @@ import {
   annualSeries,
   budgetSourceLabel,
   categoryMap,
+  categorySpending,
   DEFAULT_BUDGET_CATEGORIES,
   visibleBudgetCategories,
   dailySpending,
   filterTransactions,
+  isRefund,
   MONTHS,
   money,
   sum,
@@ -75,6 +77,16 @@ import ProfileManager, { profileInitials } from "./ProfileManager";
 import MortgageWorkspace from "./MortgageWorkspace";
 import CategoryManager from "./CategoryManager";
 import { useTheme } from "./theme";
+import { AnimatePresence, motion } from "motion/react";
+import {
+  AnimatedBar,
+  AnimatedNumber,
+  easeOut,
+  navSpring,
+  popIn,
+  riseIn,
+  staggerGroup,
+} from "./motion";
 
 const today = new Date();
 type DialogState =
@@ -105,40 +117,52 @@ function Modal({
   return (
     <dialog
       ref={ref}
+      className="modal-shell"
       aria-labelledby="dialog-title"
       onCancel={(e) => {
         e.preventDefault();
         if (!busy) onClose();
       }}
-      onClick={(e) => {
-        if (e.target === ref.current && !busy) {
-          const b = ref.current!.getBoundingClientRect();
-          if (
-            e.clientX < b.left ||
-            e.clientX > b.right ||
-            e.clientY < b.top ||
-            e.clientY > b.bottom
-          )
-            onClose();
-        }
-      }}
     >
-      <header className="dialog-heading">
-        <div>
-          <span className="overline">HISABO WORKSPACE</span>
-          <h2 id="dialog-title">{title}</h2>
-          <p>{subtitle}</p>
-        </div>
-        <button
-          className="icon-button"
-          aria-label="Close dialog"
-          onClick={onClose}
-          disabled={busy}
-        >
-          <X size={20} />
-        </button>
-      </header>
-      {children}
+      <motion.div
+        className="modal-backdrop"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0, transition: { duration: 0.2 } }}
+        transition={{ duration: 0.3 }}
+        onClick={() => {
+          if (!busy) onClose();
+        }}
+      />
+      <motion.div
+        className="modal-card"
+        initial={{ opacity: 0, y: 24, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{
+          opacity: 0,
+          y: 12,
+          scale: 0.98,
+          transition: { duration: 0.18, ease: "easeIn" },
+        }}
+        transition={{ duration: 0.38, ease: easeOut }}
+      >
+        <header className="dialog-heading">
+          <div>
+            <span className="overline">HISABO WORKSPACE</span>
+            <h2 id="dialog-title">{title}</h2>
+            <p>{subtitle}</p>
+          </div>
+          <button
+            className="icon-button"
+            aria-label="Close dialog"
+            onClick={onClose}
+            disabled={busy}
+          >
+            <X size={20} />
+          </button>
+        </header>
+        {children}
+      </motion.div>
     </dialog>
   );
 }
@@ -164,6 +188,7 @@ function TransactionForm({
 }) {
   const CATEGORY = categoryMap(categories);
   const active = categories.filter((c) => c.active);
+  const [amount, setAmount] = useState(String(transaction?.amount ?? ""));
   const [type, setType] = useState<TransactionType>(
     transaction?.type || (active.length ? "EXPENSE" : "INCOME"),
   );
@@ -178,6 +203,16 @@ function TransactionForm({
   function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    if (Number(f.get("amount")) === 0) {
+      const field = e.currentTarget.elements.namedItem(
+        "amount",
+      ) as HTMLInputElement;
+      field.setCustomValidity(
+        "Enter a non-zero amount. Use a negative expense for a refund.",
+      );
+      field.reportValidity();
+      return;
+    }
     onSave(
       {
         type,
@@ -240,12 +275,19 @@ function TransactionForm({
           <input
             name="amount"
             type="number"
-            min="0.01"
+            min={type === "EXPENSE" ? "-10000000" : "0.01"}
             max="10000000"
             step="0.01"
-            inputMode="decimal"
+            inputMode={type === "EXPENSE" ? "text" : "decimal"}
             required
-            defaultValue={transaction?.amount}
+            value={amount}
+            onChange={(e) => {
+              e.currentTarget.setCustomValidity("");
+              setAmount(e.target.value);
+            }}
+            aria-describedby={
+              type === "EXPENSE" ? "refund-amount-hint" : undefined
+            }
             placeholder="0.00"
             disabled={busy}
           />
@@ -263,6 +305,16 @@ function TransactionForm({
           />
         </label>
       </div>
+      {type === "EXPENSE" && (
+        <p
+          id="refund-amount-hint"
+          className={`transaction-refund-hint ${Number(amount) < 0 ? "is-refund" : ""}`}
+        >
+          {Number(amount) < 0
+            ? `Refund · ${money(Math.abs(Number(amount)), 2)} will reduce ${CATEGORY[category]?.label ?? "this category"} spending.`
+            : "Enter a negative amount for a refund to this category."}
+        </p>
+      )}
       <div className="form-grid">
         <label className="field">
           Category
@@ -461,7 +513,7 @@ function SpendingCalendar({
 }) {
   const daily = dailySpending(month, year),
     start = new Date(year, month.number - 1, 1).getDay(),
-    max = Math.max(...daily, 1),
+    max = Math.max(...daily.map(Math.abs), 1),
     elapsed =
       year < today.getFullYear() ||
       (year === today.getFullYear() && month.number < today.getMonth() + 1)
@@ -471,7 +523,7 @@ function SpendingCalendar({
           : 0,
     activeDays = daily.slice(0, elapsed).filter((n) => n > 0).length;
   return (
-    <section className="panel calendar-panel">
+    <motion.section className="panel calendar-panel" variants={riseIn}>
       <div className="panel-heading">
         <div>
           <h2>Spending calendar</h2>
@@ -487,39 +539,50 @@ function SpendingCalendar({
           <span key={d}>{d}</span>
         ))}
       </div>
-      <div className="calendar-grid">
+      <motion.div
+        className="calendar-grid"
+        key={`${year}-${month.number}`}
+        initial="hidden"
+        animate="show"
+        variants={{ hidden: {}, show: { transition: { staggerChildren: 0.012 } } }}
+      >
         {Array.from({ length: start }, (_, i) => (
           <span key={`blank-${i}`} className="calendar-empty" />
         ))}
         {daily.map((amount, i) => {
           const intensity = amount
-            ? Math.max(0.12, Math.sqrt(amount / max))
+            ? Math.max(0.12, Math.sqrt(Math.abs(amount) / max))
             : 0;
+          const description =
+            amount < 0
+              ? `${money(-amount, 2)} net refund`
+              : `${money(amount, 2)} net spent`;
           return (
-            <div
+            <motion.div
+              variants={popIn}
               className={`calendar-day ${intensity > 0.65 ? "dark-day" : ""}`}
               key={i}
               tabIndex={0}
-              title={`${MONTHS[month.number - 1]} ${i + 1}: ${money(amount, 2)} spent`}
-              aria-label={`${MONTHS[month.number - 1]} ${i + 1}, ${money(amount, 2)} spent`}
+              title={`${MONTHS[month.number - 1]} ${i + 1}: ${description}`}
+              aria-label={`${MONTHS[month.number - 1]} ${i + 1}, ${description}`}
               style={{
                 background: amount
-                  ? `rgba(66,99,235,${intensity})`
+                  ? `rgba(${amount < 0 ? "20,130,108" : "66,99,235"},${intensity})`
                   : "var(--surface-muted, #f5f7fb)",
               }}
             >
               <span>{i + 1}</span>
-              {amount > 0 && (
+              {amount !== 0 && (
                 <small>
-                  {amount >= 1000
+                  {Math.abs(amount) >= 1000
                     ? `${(amount / 1000).toFixed(1)}k`
                     : Math.round(amount)}
                 </small>
               )}
-            </div>
+            </motion.div>
           );
         })}
-      </div>
+      </motion.div>
       <div className="calendar-footer">
         <span>
           <strong>{activeDays}</strong> spending days{" "}
@@ -534,7 +597,7 @@ function SpendingCalendar({
           <span>More</span>
         </div>
       </div>
-    </section>
+    </motion.section>
   );
 }
 
@@ -575,7 +638,11 @@ function Transactions({
     current = Math.min(page, pages),
     visible = rows.slice((current - 1) * 7, current * 7);
   return (
-    <section className="panel transactions-panel" id="transactions">
+    <motion.section
+      className="panel transactions-panel"
+      id="transactions"
+      variants={riseIn}
+    >
       <div className="panel-heading">
         <div>
           <h2>
@@ -649,7 +716,12 @@ function Transactions({
               </th>
             </tr>
           </thead>
-          <tbody>
+          <motion.tbody
+            key={`${year}-${month.number}-${current}`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.25 }}
+          >
             {visible.map((t) => (
               <tr key={t.id}>
                 <td>
@@ -670,7 +742,11 @@ function Transactions({
                     <div>
                       <strong>{t.description}</strong>
                       <span>
-                        {t.type === "INCOME" ? "Money received" : "Payment"}
+                        {t.type === "INCOME"
+                          ? "Money received"
+                          : isRefund(t)
+                            ? "Refund"
+                            : "Payment"}
                       </span>
                     </div>
                   </div>
@@ -691,10 +767,10 @@ function Transactions({
                   })}
                 </td>
                 <td
-                  className={`amount-cell ${t.type === "INCOME" ? "income-amount" : ""}`}
+                  className={`amount-cell ${t.type === "INCOME" || isRefund(t) ? "income-amount" : ""}`}
                 >
-                  {t.type === "INCOME" ? "+" : "−"}
-                  {money(t.amount, 2)}
+                  {t.type === "INCOME" || isRefund(t) ? "+" : "−"}
+                  {money(Math.abs(t.amount), 2)}
                 </td>
                 <td>
                   <div className="row-actions">
@@ -716,7 +792,7 @@ function Transactions({
                 </td>
               </tr>
             ))}
-          </tbody>
+          </motion.tbody>
         </table>
         {!rows.length && (
           <div className="empty-state">
@@ -768,7 +844,7 @@ function Transactions({
           </button>
         </div>
       </div>
-    </section>
+    </motion.section>
   );
 }
 
@@ -992,13 +1068,11 @@ export default function App() {
     ? visibleBudgetCategories(categories, current).map(({ id: c, active }) => ({
         active,
         category: c,
-        total: sum(
-          current.transactions
-            .filter((t) => t.category === c)
-            .map((t) => t.amount),
-        ),
+        total: categorySpending(current, c),
       }))
     : [];
+  const positiveSpending = sum(expenses.map((c) => Math.max(0, c.total)));
+  const hasNetRefunds = expenses.some((c) => c.total < 0);
   const previous =
     ledger && month > 1 ? summarize(ledger.months[month - 2]) : null;
   const change =
@@ -1070,9 +1144,18 @@ export default function App() {
               disabled={controlsBusy}
               onClick={() => setWorkspaceView("mortgage")}
             >
+              {showMortgage && (
+                <motion.span
+                  className="nav-active-bg"
+                  layoutId="nav-active"
+                  transition={navSpring}
+                />
+              )}
               <House size={19} />
               <span>Mortgage planner</span>
-              {showMortgage && <i />}
+              {showMortgage && (
+                <motion.i layoutId="nav-dot" transition={navSpring} />
+              )}
             </button>
           )}
           {[
@@ -1090,9 +1173,18 @@ export default function App() {
               }
               onClick={() => navigate(item.id)}
             >
+              {!showMortgage && navigation === item.id && (
+                <motion.span
+                  className="nav-active-bg"
+                  layoutId="nav-active"
+                  transition={navSpring}
+                />
+              )}
               <item.icon size={19} />
               <span>{item.label}</span>
-              {!showMortgage && navigation === item.id && <i />}
+              {!showMortgage && navigation === item.id && (
+                <motion.i layoutId="nav-dot" transition={navSpring} />
+              )}
             </button>
           ))}
         </nav>
@@ -1198,7 +1290,12 @@ export default function App() {
             </div>
           )}
           <div hidden={showMortgage}>
-            <div className="page-heading">
+            <motion.div
+              className="page-heading"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: easeOut }}
+            >
               <div>
                 <span className="overline">YOUR FINANCIAL WORKSPACE</span>
                 <h1>
@@ -1230,8 +1327,13 @@ export default function App() {
                   New transaction
                 </button>
               </div>
-            </div>
-            <div className="period-bar">
+            </motion.div>
+            <motion.div
+              className="period-bar"
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.08, ease: easeOut }}
+            >
               <label className="year-select">
                 <CalendarDays size={17} />
                 <select
@@ -1287,10 +1389,17 @@ export default function App() {
                     disabled={busy}
                   >
                     {name.slice(0, 3)}
+                    {month === index + 1 && (
+                      <motion.span
+                        className="month-underline"
+                        layoutId="month-underline"
+                        transition={navSpring}
+                      />
+                    )}
                   </button>
                 ))}
               </div>
-            </div>
+            </motion.div>
             {(ledger?.workbook?.warning || downloadError) && (
               <div className="error-banner" role="alert">
                 <CircleAlert size={21} />
@@ -1315,8 +1424,17 @@ export default function App() {
                 </button>
               </div>
             )}
+            <AnimatePresence mode="wait">
             {loading && !ledger && (
-              <div className="loading-grid" aria-live="polite">
+              <motion.div
+                key="skeleton"
+                className="loading-grid"
+                aria-live="polite"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+              >
                 <div className="loading-message">
                   <LoaderCircle size={24} className="spin" />
                   Opening your {year} ledger…
@@ -1325,16 +1443,21 @@ export default function App() {
                   <div className="skeleton-card" key={n} />
                 ))}
                 <div className="skeleton-panel" />
-              </div>
+              </motion.div>
             )}
             {ledger && current && summary && (
-              <div
+              <motion.div
+                key={`${profileId}-${year}`}
                 id="month-content"
                 role="tabpanel"
                 aria-labelledby={`month-tab-${month}`}
                 className={`dashboard-content ${loading ? "refreshing" : ""}`}
+                variants={staggerGroup}
+                initial="hidden"
+                animate="show"
+                exit={{ opacity: 0, transition: { duration: 0.15 } }}
               >
-                <div className="profile-workbook-bar">
+                <motion.div className="profile-workbook-bar" variants={riseIn}>
                   <div>
                     <span className="workbook-icon">
                       <FileSpreadsheet size={20} />
@@ -1359,10 +1482,19 @@ export default function App() {
                     )}
                     <span>{downloading ? "Preparing…" : "Download Excel"}</span>
                   </button>
-                </div>
-                <div className="period-caption">
+                </motion.div>
+                <motion.div className="period-caption" variants={riseIn}>
                   <h2>
-                    {MONTHS[month - 1]} <span>{year}</span>
+                    <motion.span
+                      key={`${year}-${month}`}
+                      className="period-month"
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.35, ease: easeOut }}
+                    >
+                      {MONTHS[month - 1]}
+                    </motion.span>{" "}
+                    <span>{year}</span>
                   </h2>
                   <div>
                     <span className="save-status">
@@ -1375,12 +1507,16 @@ export default function App() {
                       <span className="demo-pill">Sample ledger</span>
                     )}
                   </div>
-                </div>
-                <section
+                </motion.div>
+                <motion.section
                   className="metrics-grid"
                   aria-label="Monthly financial totals"
+                  variants={staggerGroup}
                 >
-                  <article className="metric-card balance-metric">
+                  <motion.article
+                    className="metric-card balance-metric"
+                    variants={riseIn}
+                  >
                     <div className="metric-label">
                       Net cash flow
                       <span>
@@ -1388,7 +1524,10 @@ export default function App() {
                       </span>
                     </div>
                     <div className="metric-value">
-                      {money(summary.balance, 2)}
+                      <AnimatedNumber
+                        value={summary.balance}
+                        format={(n) => money(n, 2)}
+                      />
                     </div>
                     <div className="metric-bottom">
                       <span>
@@ -1402,14 +1541,20 @@ export default function App() {
                     </div>
                     <div className="balance-detail">
                       <span>
-                        Income<strong>{money(summary.income)}</strong>
+                        Income
+                        <strong>
+                          <AnimatedNumber value={summary.income} format={money} />
+                        </strong>
                       </span>
                       <span>
-                        Expenses<strong>{money(summary.expense)}</strong>
+                        Expenses
+                        <strong>
+                          <AnimatedNumber value={summary.expense} format={money} />
+                        </strong>
                       </span>
                     </div>
-                  </article>
-                  <article className="metric-card">
+                  </motion.article>
+                  <motion.article className="metric-card" variants={riseIn}>
                     <div className="metric-label">
                       Monthly spending
                       <span className="metric-icon lavender">
@@ -1417,7 +1562,10 @@ export default function App() {
                       </span>
                     </div>
                     <div className="metric-value">
-                      {money(summary.expense, 2)}
+                      <AnimatedNumber
+                        value={summary.expense}
+                        format={(n) => money(n, 2)}
+                      />
                     </div>
                     <div className="metric-bottom">
                       <span
@@ -1443,8 +1591,8 @@ export default function App() {
                       }{" "}
                       expense transactions this month
                     </div>
-                  </article>
-                  <article className="metric-card">
+                  </motion.article>
+                  <motion.article className="metric-card" variants={riseIn}>
                     <div className="metric-label">
                       Budget remaining
                       <span className="metric-icon blue">
@@ -1454,23 +1602,26 @@ export default function App() {
                     <div
                       className={`metric-value ${summary.remaining < 0 ? "over-budget" : ""}`}
                     >
-                      {money(summary.remaining, 2)}
+                      <AnimatedNumber
+                        value={summary.remaining}
+                        format={(n) => money(n, 2)}
+                      />
                     </div>
                     <div className="budget-mini-track">
-                      <span
-                        style={{
-                          width: `${Math.min(100, budgetUsed)}%`,
-                          background: budgetUsed > 100 ? "#df7469" : undefined,
-                        }}
+                      <AnimatedBar
+                        percent={budgetUsed}
+                        color={budgetUsed > 100 ? "#df7469" : undefined}
                       />
                     </div>
                     <div className="metric-footnote">
-                      {summary.budget
-                        ? `${Math.round(budgetUsed)}% of ${money(summary.budget)} allocated`
-                        : "Set a monthly budget to get started"}
+                      {summary.expense < 0
+                        ? `${money(-summary.expense, 2)} net refund this month`
+                        : summary.budget
+                          ? `${Math.round(budgetUsed)}% of ${money(summary.budget)} used`
+                          : "Set a monthly budget to get started"}
                     </div>
-                  </article>
-                  <article className="metric-card">
+                  </motion.article>
+                  <motion.article className="metric-card" variants={riseIn}>
                     <div className="metric-label">
                       Savings rate
                       <span className="metric-icon mint">
@@ -1478,7 +1629,14 @@ export default function App() {
                       </span>
                     </div>
                     <div className="metric-value">
-                      {summary.income ? summary.savingsRate.toFixed(1) : "—"}
+                      {summary.income ? (
+                        <AnimatedNumber
+                          value={summary.savingsRate}
+                          format={(n) => n.toFixed(1)}
+                        />
+                      ) : (
+                        "—"
+                      )}
                       <small>{summary.income ? "%" : ""}</small>
                     </div>
                     <div className="metric-bottom">
@@ -1497,10 +1655,14 @@ export default function App() {
                     <div className="metric-footnote">
                       Unspent income as a share of income
                     </div>
-                  </article>
-                </section>
-                <div className="charts-row">
-                  <section className="panel cashflow-panel" id="cashflow">
+                  </motion.article>
+                </motion.section>
+                <motion.div className="charts-row" variants={staggerGroup}>
+                  <motion.section
+                    className="panel cashflow-panel"
+                    id="cashflow"
+                    variants={riseIn}
+                  >
                     <div className="panel-heading">
                       <div>
                         <h2>Cash flow</h2>
@@ -1532,16 +1694,17 @@ export default function App() {
                           />
                         </span>
                         <strong>
-                          {money(
-                            sum(
+                          <AnimatedNumber
+                            format={money}
+                            value={sum(
                               series
                                 .slice(
                                   range === "six" ? Math.max(0, month - 6) : 0,
                                   range === "six" ? month : 12,
                                 )
                                 .map((s) => s.income),
-                            ),
-                          )}
+                            )}
+                          />
                         </strong>
                       </div>
                       <div>
@@ -1554,16 +1717,17 @@ export default function App() {
                           />
                         </span>
                         <strong>
-                          {money(
-                            sum(
+                          <AnimatedNumber
+                            format={money}
+                            value={sum(
                               series
                                 .slice(
                                   range === "six" ? Math.max(0, month - 6) : 0,
                                   range === "six" ? month : 12,
                                 )
                                 .map((s) => s.expense),
-                            ),
-                          )}
+                            )}
+                          />
                         </strong>
                       </div>
                       <span className="chart-period">
@@ -1577,8 +1741,11 @@ export default function App() {
                       month={month}
                       range={range}
                     />
-                  </section>
-                  <section className="panel breakdown-panel">
+                  </motion.section>
+                  <motion.section
+                    className="panel breakdown-panel"
+                    variants={riseIn}
+                  >
                     <div className="panel-heading">
                       <div>
                         <h2>Spending breakdown</h2>
@@ -1591,8 +1758,10 @@ export default function App() {
                     <div className="donut-container">
                       <SpendingDonut month={current} categories={categories} />
                       <div className="donut-label">
-                        <span>Total expenses</span>
-                        <strong>{money(summary.expense)}</strong>
+                        <span>Net expenses</span>
+                        <strong>
+                          <AnimatedNumber value={summary.expense} format={money} />
+                        </strong>
                         <small>
                           {expenses.filter((c) => c.total > 0).length}{" "}
                           categories
@@ -1608,18 +1777,27 @@ export default function App() {
                           </span>
                           <strong>{money(total)}</strong>
                           <small>
-                            {summary.expense
-                              ? Math.round((total / summary.expense) * 100)
-                              : 0}
-                            %
+                            {total < 0
+                              ? "Refund"
+                              : `${positiveSpending ? Math.round((total / positiveSpending) * 100) : 0}%`}
                           </small>
                         </div>
                       ))}
                     </div>
-                  </section>
-                </div>
-                <div className="detail-row">
-                  <section className="panel budgets-panel" id="budgets">
+                    {hasNetRefunds && (
+                      <p className="refund-chart-note">
+                        Refund credits are included in the total. The ring shows
+                        categories with net spending.
+                      </p>
+                    )}
+                  </motion.section>
+                </motion.div>
+                <motion.div className="detail-row" variants={staggerGroup}>
+                  <motion.section
+                    className="panel budgets-panel"
+                    id="budgets"
+                    variants={riseIn}
+                  >
                     <div className="panel-heading">
                       <div>
                         <h2>Budget performance</h2>
@@ -1672,7 +1850,7 @@ export default function App() {
                         const limit = current.budgets[c] ?? 0,
                           used = limit
                             ? (total / limit) * 100
-                            : total
+                            : total > 0
                               ? 100
                               : 0;
                         return (
@@ -1708,22 +1886,21 @@ export default function App() {
                             </div>
                             <div className="budget-row-bottom">
                               <div className="progress-track">
-                                <span
-                                  style={{
-                                    width: `${Math.min(100, used)}%`,
-                                    background:
-                                      total > limit
-                                        ? "#df7469"
-                                        : CATEGORY[c].color,
-                                  }}
+                                <AnimatedBar
+                                  percent={used}
+                                  color={
+                                    total > limit ? "#df7469" : CATEGORY[c].color
+                                  }
                                 />
                               </div>
                               <span>
-                                {limit
-                                  ? `${Math.round(used)}%`
-                                  : total
-                                    ? "Over"
-                                    : "—"}
+                                {total < 0
+                                  ? "Credit"
+                                  : limit
+                                    ? `${Math.round(used)}%`
+                                    : total
+                                      ? "Over"
+                                      : "—"}
                               </span>
                             </div>
                           </button>
@@ -1738,7 +1915,12 @@ export default function App() {
                         <strong>Savings</strong>
                         <small>Income not assigned to category budgets</small>
                       </div>
-                      <strong>{money(summary.savings, 2)}</strong>
+                      <strong>
+                        <AnimatedNumber
+                          value={summary.savings}
+                          format={(n) => money(n, 2)}
+                        />
+                      </strong>
                     </div>
                     {summary.budgetShortfall > 0 && (
                       <p className="budget-plan-warning budget-panel-warning">
@@ -1763,9 +1945,9 @@ export default function App() {
                             : `Spending is ${money(-summary.remaining)} above your monthly plan.`}
                       </span>
                     </div>
-                  </section>
+                  </motion.section>
                   <SpendingCalendar month={current} year={year} />
-                </div>
+                </motion.div>
                 <Transactions
                   categories={categories}
                   month={current}
@@ -1778,7 +1960,7 @@ export default function App() {
                     openDialog({ kind: "delete", transaction })
                   }
                 />
-                <footer className="page-footer">
+                <motion.footer className="page-footer" variants={riseIn}>
                   <span>
                     <ShieldCheck size={15} />
                     Your data stays on your computer.
@@ -1786,9 +1968,10 @@ export default function App() {
                   <span>
                     Hisabo <span>·</span> {year} ledger <span>·</span> USD
                   </span>
-                </footer>
-              </div>
+                </motion.footer>
+              </motion.div>
             )}
+            </AnimatePresence>
           </div>
         </div>
       </main>
@@ -1808,8 +1991,10 @@ export default function App() {
           </button>
         ))}
       </nav>
+      <AnimatePresence>
       {profilesOpen && (
         <Modal
+          key="profiles"
           title="Your profiles"
           subtitle="One app. A separate space for each budget."
           busy={profileBusy}
@@ -1825,8 +2010,11 @@ export default function App() {
           />
         </Modal>
       )}
+      </AnimatePresence>
+      <AnimatePresence>
       {dialog && ledger && current && (
         <Modal
+          key="dialog"
           title={
             dialog.kind === "transaction"
               ? dialog.transaction
@@ -1959,18 +2147,29 @@ export default function App() {
           )}
         </Modal>
       )}
-      {toast && (
-        <div className="toast" role="status">
-          <CheckCircle2 size={20} />
-          {toast}
-          <button
-            aria-label="Dismiss notification"
-            onClick={() => setToast("")}
+      </AnimatePresence>
+      <AnimatePresence>
+        {toast && (
+          <motion.div
+            key="toast"
+            className="toast"
+            role="status"
+            initial={{ opacity: 0, y: 18, x: "-50%" }}
+            animate={{ opacity: 1, y: 0, x: "-50%" }}
+            exit={{ opacity: 0, y: 10, x: "-50%", transition: { duration: 0.18 } }}
+            transition={{ type: "spring", stiffness: 420, damping: 32 }}
           >
-            <X size={16} />
-          </button>
-        </div>
-      )}
+            <CheckCircle2 size={20} />
+            {toast}
+            <button
+              aria-label="Dismiss notification"
+              onClick={() => setToast("")}
+            >
+              <X size={16} />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

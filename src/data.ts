@@ -65,6 +65,14 @@ export const ACCOUNT = {
   SAVINGS: "Savings",
 };
 export const cents = (amount: number) => Math.round(amount * 100);
+export const isRefund = (transaction: Pick<Transaction, "type" | "amount">) =>
+  transaction.type === "EXPENSE" && transaction.amount < 0;
+export const categorySpending = (month: MonthLedger, category: Category) =>
+  sum(
+    month.transactions
+      .filter((t) => t.type === "EXPENSE" && t.category === category)
+      .map((t) => t.amount),
+  );
 export const sum = (values: number[]) =>
   values.reduce((total, value) => total + cents(value), 0) / 100;
 export const money = (n: number, decimals = 0) =>

@@ -1501,6 +1501,19 @@ dialog::backdrop {
   grid-template-columns: 1fr 1fr;
   gap: 15px;
 }
+.transaction-refund-hint,
+.refund-chart-note {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+.transaction-refund-hint.is-refund {
+  color: var(--success-text, #14826c);
+}
+.refund-chart-note {
+  margin: 12px 0 0;
+}
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
@@ -3754,8 +3767,10 @@ dialog::backdrop {
   padding: 0;
   margin: 0;
   list-style: none;
-  max-height: 340px;
+  max-height: var(--lump-sum-list-height, none);
   overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
 }
 .lump-sum-row {
   border-top: 1px solid var(--border, #e8eef1);
@@ -5020,5 +5035,158 @@ dialog:has(.category-manager) {
   }
   .theme-toggle span {
     display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------- */
+/* Motion & premium feel                                                   */
+/* ---------------------------------------------------------------------- */
+
+/* Sidebar: active highlight slides between items. */
+.nav-item {
+  position: relative;
+  transition:
+    color 0.18s,
+    background 0.18s;
+}
+.nav-item > svg,
+.nav-item > span:not(.nav-active-bg),
+.nav-item > i {
+  position: relative;
+  z-index: 1;
+}
+.nav-item.active {
+  background: none;
+  border: 0;
+  padding: 14px 13px;
+}
+.nav-item > .nav-active-bg {
+  display: block;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 8px;
+  background: #2e4ec030;
+  border: 1px solid #4263eb44;
+}
+@media (max-width: 1050px) {
+  .nav-item.active {
+    padding: 15px 9px;
+  }
+}
+
+/* Month tabs: underline glides to the selected month. */
+.month-tabs button {
+  position: relative;
+  transition:
+    color 0.18s,
+    background 0.18s;
+}
+.month-tabs button.active {
+  border-color: transparent;
+}
+.month-underline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--blue);
+}
+.period-caption h2 > .period-month {
+  display: inline-block;
+  color: inherit;
+  font-weight: inherit;
+  margin-left: 0;
+}
+
+/* Cards and rows respond to the pointer. */
+.metric-card {
+  transition:
+    transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.3s,
+    border-color 0.3s;
+}
+.metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 32px #26395c14;
+  border-color: var(--accent-border, #d6def2);
+}
+:root[data-theme="dark"] .metric-card:hover {
+  box-shadow: 0 12px 32px #00000045;
+}
+.panel {
+  transition: box-shadow 0.3s;
+}
+.budget-row,
+tbody tr,
+.calendar-day {
+  transition:
+    background 0.18s,
+    transform 0.18s;
+}
+.budget-row:hover .category-square {
+  transform: scale(1.06);
+}
+.category-square,
+.merchant-icon {
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+tbody tr:hover .merchant-icon {
+  transform: scale(1.06);
+}
+.budget-mini-track > span,
+.progress-track span {
+  will-change: width;
+}
+
+/* Modal: transparent full-screen dialog with its own animated backdrop. */
+dialog.modal-shell {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  width: 100vw;
+  max-width: 100vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  box-shadow: none;
+  overflow: hidden;
+}
+dialog.modal-shell[open] {
+  display: grid;
+  place-items: center;
+}
+dialog.modal-shell::backdrop {
+  background: transparent;
+  backdrop-filter: none;
+}
+.modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: #0b1a36a6;
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+.modal-card {
+  position: relative;
+  border: 1px solid var(--accent-border, #e1e8f5);
+  background: var(--surface, #fff);
+  color: var(--text-strong, #263752);
+  border-radius: 18px;
+  width: min(520px, calc(100% - 28px));
+  padding: 28px;
+  box-shadow: 0 25px 100px #11264d40;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+.modal-card:has(.category-manager) {
+  width: min(620px, calc(100% - 28px));
+  overflow: hidden;
+}
+@media (max-width: 760px) {
+  .modal-card {
+    padding: 23px;
   }
 }

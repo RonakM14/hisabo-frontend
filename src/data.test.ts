@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   dailySpending,
+  categorySpending,
+  isRefund,
   filterTransactions,
   sum,
   summarize,
@@ -113,6 +115,81 @@ describe("custom budget categories", () => {
         ],
       }),
     ).toMatchObject({ budget: 30, expense: 5.1, remaining: 24.9 });
+  });
+});
+
+describe("expense refunds", () => {
+  const sample: MonthLedger = {
+    ...month,
+    budgets: { FOOD: 200 },
+    transactions: [
+      {
+        ...expense,
+        id: "salary",
+        type: "INCOME",
+        category: "SALARY",
+        amount: 1000,
+      },
+      { ...expense, id: "purchase", amount: 100, date: "2028-02-28" },
+      { ...expense, id: "refund", amount: -6.25 },
+    ],
+  };
+  it("deducts refunds from the selected category and expenses without counting them as income", () => {
+    expect(categorySpending(sample, "FOOD")).toBe(93.75);
+    expect(categorySpending(sample, "SHOPPING")).toBe(0);
+    expect(summarize(sample)).toMatchObject({
+      income: 1000,
+      expense: 93.75,
+      balance: 906.25,
+      remaining: 106.25,
+      savings: 800,
+    });
+    expect(dailySpending(sample, 2028)[28]).toBe(-6.25);
+    expect(
+      filterTransactions(sample.transactions, "", "EXPENSE", "newest"),
+    ).toHaveLength(2);
+    expect(isRefund(sample.transactions[2])).toBe(true);
+    expect(isRefund(sample.transactions[0])).toBe(false);
+  });
+  it("keeps a category credit when refunds exceed spending, including refunds from earlier purchases", () => {
+    const refunded = {
+      ...sample,
+      transactions: [
+        ...sample.transactions.slice(0, 2),
+        { ...sample.transactions[2], amount: -125.5 },
+      ],
+    };
+    expect(categorySpending(refunded, "FOOD")).toBe(-25.5);
+    expect(summarize(refunded)).toMatchObject({
+      income: 1000,
+      expense: -25.5,
+      balance: 1025.5,
+      remaining: 225.5,
+    });
+    const refundOnly = { ...sample, transactions: [sample.transactions[2]] };
+    expect(summarize(refundOnly)).toMatchObject({
+      income: 0,
+      expense: -6.25,
+      balance: 6.25,
+      remaining: 206.25,
+    });
+  });
+  it("restores category spending when a refund is edited or removed", () => {
+    const edited = {
+      ...sample,
+      transactions: [
+        ...sample.transactions.slice(0, 2),
+        { ...sample.transactions[2], category: "CUSTOM_travel" },
+      ],
+    };
+    expect(categorySpending(edited, "FOOD")).toBe(100);
+    expect(categorySpending(edited, "CUSTOM_travel")).toBe(-6.25);
+    const deleted = {
+      ...sample,
+      transactions: sample.transactions.slice(0, 2),
+    };
+    expect(categorySpending(deleted, "FOOD")).toBe(100);
+    expect(summarize(deleted).expense).toBe(100);
   });
 });
 
